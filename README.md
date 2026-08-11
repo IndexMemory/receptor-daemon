@@ -76,8 +76,8 @@ receptor-daemon folders remove /srv/shared-docs
 
 # Update settings later without touching your folder list — unlike
 # re-running `init`, which always rebuilds the config from scratch and
-# would wipe your folders out. Restarts the running service automatically
-# if one is installed, so the change actually takes effect.
+# would wipe your folders out. Restarts the background service
+# automatically if one is running, so the change actually takes effect.
 receptor-daemon configure --sync-interval-minutes 30
 
 # One-shot manual sync (useful for testing, or a cron-based setup instead
@@ -87,22 +87,27 @@ receptor-daemon sync
 # Connection, folder count, service status, and recent activity
 receptor-daemon status
 
-# Install as a background service (systemd on Linux, launchd on macOS).
-# Default is a per-user install, no root needed.
-receptor-daemon install
-receptor-daemon uninstall
+# Run receptor-daemon in the background from now on (systemd on Linux,
+# launchd on macOS) instead of needing a terminal open with `run`.
+# Default is per-user, no root needed.
+receptor-daemon start
+receptor-daemon stop
 
-# System-wide install instead — needs sudo
-sudo receptor-daemon install --system
+# Run system-wide instead — needs sudo
+sudo receptor-daemon start --system
+
+# Which build you're running — check this first if something documented
+# here seems to be missing; you may be on an old binary
+receptor-daemon --version
 ```
 
-**Starting automatically on boot** — this is where the two install modes
+**Starting automatically on boot** — this is where the two `start` modes
 genuinely differ, not just in whether they need sudo:
 - **`--system`**: starts at boot on both platforms, independent of any
   login — the systemd unit targets `multi-user.target`; the launchd job
   is a `LaunchDaemon`. This is what you want on a headless server nobody
   ever logs into interactively.
-- **Per-user (default)**: on Linux, `install` also runs `loginctl
+- **Per-user (default)**: on Linux, `start` also runs `loginctl
   enable-linger` for you as a best-effort step, so even a per-user
   systemd unit starts at boot without requiring a login session. On
   macOS, there's no equivalent — a per-user `LaunchAgent` only starts
@@ -119,8 +124,9 @@ location (an XDG-style per-user config directory:
 `~/Library/Application Support/receptor-daemon/config.json` on macOS).
 
 `receptor-daemon run` is the actual foreground sync loop — what the
-installed service unit executes. You normally don't run this directly
-except to test; use `install` to run it as a proper background service.
+background service executes once `start` has set it up. You normally
+don't run this directly except to test; use `start` to run it as a
+proper background service instead.
 
 ## Config file
 
@@ -198,11 +204,10 @@ like Multipass, which default to arm64 guests on ARM hosts.
 - **No package manager distribution** — no `.deb`, no Homebrew formula
   yet. Ships as a plain binary via GitHub Releases, same tradeoff already
   made for the other two Receptor apps.
-- **`install`/`uninstall` confirmed working against a real launchd on
-  macOS** (per-user install). **Still unverified against a real
-  systemd** — so far only confirmed that the unit file content/paths are
-  correct and that it fails cleanly when `systemctl` isn't available
-  (e.g. inside a plain Docker container, which has no init system
-  running). Needs a real Linux box (or a VM with real systemd, e.g. via
-  Multipass) to confirm end-to-end, including the `loginctl
-  enable-linger` boot-start behavior.
+- **`start`/`stop` confirmed working against a real launchd on macOS**
+  (per-user). **Still unverified against a real systemd** — so far only
+  confirmed that the unit file content/paths are correct and that it
+  fails cleanly when `systemctl` isn't available (e.g. inside a plain
+  Docker container, which has no init system running). Needs a real
+  Linux box (or a VM with real systemd, e.g. via Multipass) to confirm
+  end-to-end, including the `loginctl enable-linger` boot-start behavior.

@@ -37,7 +37,10 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build -o ${{ matrix.artifact }} ./cmd/receptor-daemon
+        # Embeds the exact tag this binary was built from, so `receptor-daemon
+        # --version` always tells you precisely what you're running — added
+        # after repeated confusion testing against a stale binary.
+        run: go build -ldflags "-X main.version=${{ github.ref_name }}" -o ${{ matrix.artifact }} ./cmd/receptor-daemon
 
       - uses: actions/upload-artifact@v4
         with:

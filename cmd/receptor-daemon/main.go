@@ -23,6 +23,13 @@ import (
 	"github.com/IndexMemory/receptor-daemon/internal/service"
 )
 
+// version is overridden at release-build time via
+// `-ldflags "-X main.version=vX.Y.Z"` (see .github/workflows/release.yml)
+// so a built binary always knows exactly what it is — added after
+// repeated confusion from testing against a stale binary that predated
+// whatever feature was just discussed.
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		if err := cmdDefault(); err != nil {
@@ -49,10 +56,13 @@ func main() {
 		err = cmdStatus(args)
 	case "run":
 		err = cmdRun(args)
-	case "install":
-		err = cmdInstall(args)
-	case "uninstall":
-		err = cmdUninstall(args)
+	case "start":
+		err = cmdStart(args)
+	case "stop":
+		err = cmdStop(args)
+	case "-v", "--version", "version":
+		fmt.Println("receptor-daemon " + version)
+		return
 	case "-h", "--help", "help":
 		printUsage()
 		return
@@ -68,8 +78,8 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprint(os.Stderr, `receptor-daemon — headless folder sync for Memory (Linux/macOS)
-
+	fmt.Fprintf(os.Stderr, "receptor-daemon %s — headless folder sync for Memory (Linux/macOS)\n", version)
+	fmt.Fprint(os.Stderr, `
 Usage:
   receptor-daemon                                run with no arguments for an
                                                   interactive setup wizard on
@@ -86,23 +96,30 @@ Usage:
                             [--sync-interval-minutes <n>]
                                                   update settings without
                                                   touching your folder list;
-                                                  restarts the service
-                                                  automatically if one is
-                                                  installed
+                                                  restarts the background
+                                                  service automatically if
+                                                  one is running
   receptor-daemon folders add <path> [--ignore pat,pat]
   receptor-daemon folders remove <path>
   receptor-daemon folders list
   receptor-daemon sync
   receptor-daemon status
   receptor-daemon run
-  receptor-daemon install [--system]             --system starts automatically
+  receptor-daemon start [--system]               runs it in the background from
+                                                  now on, via systemd/launchd;
+                                                  --system starts automatically
                                                   at boot even without logging
                                                   in (needs sudo); per-user
                                                   needs no sudo (Linux: still
                                                   starts at boot via systemd
                                                   lingering; macOS: starts at
                                                   login only)
-  receptor-daemon uninstall [--system]
+  receptor-daemon stop [--system]                stops the background service
+                                                  (config is untouched)
+  receptor-daemon --version                      print the build version —
+                                                  check this if something
+                                                  documented here seems missing,
+                                                  you may be on an old binary
 
 All subcommands accept --config <path> to override the default config
 location (`+defaultConfigPathForUsage()+`).
@@ -281,14 +298,14 @@ func runSetupWizard(configPath string) error {
 	}
 
 	fmt.Println()
-	installNow, err := promptYesNo(reader, "Install as a background service now?", true)
+	startNow, err := promptYesNo(reader, "Start receptor-daemon as a background service now?", true)
 	if err != nil {
 		return fmt.Errorf("reading input: %w", err)
 	}
-	if installNow {
-		fmt.Println("A system-wide install starts automatically at boot, even without logging in, but needs sudo.")
-		fmt.Println("A per-user install needs no sudo — on Linux it can still start at boot via systemd lingering; on macOS it only starts once you log in.")
-		systemWide, err := promptYesNo(reader, "Use a system-wide install?", false)
+	if startNow {
+		fmt.Println("A system-wide start runs automatically at boot, even without logging in, but needs sudo.")
+		fmt.Println("A per-user start needs no sudo — on Linux it can still start at boot via systemd lingering; on macOS it only starts once you log in.")
+		systemWide, err := promptYesNo(reader, "Start it system-wide?", false)
 		if err != nil {
 			return fmt.Errorf("reading input: %w", err)
 		}
@@ -298,9 +315,9 @@ func runSetupWizard(configPath string) error {
 			return err
 		}
 		if err := service.Install(opts); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not install the service: %v\n", err)
+			fmt.Fprintf(os.Stderr, "warning: could not start the service: %v\n", err)
 		} else {
-			fmt.Println("installed and started the receptor-daemon service")
+			fmt.Println("started the receptor-daemon service")
 		}
 	}
 
@@ -308,8 +325,6 @@ func runSetupWizard(configPath string) error {
 	return nil
 }
 
-// promptLine prints label (with def shown as the value used on empty
-// input, if any) and returns the trimmed line the user typed.
 // promptLine prints label (with def shown as the value used on empty
 // input, if any) and returns the trimmed line the user typed. Returns an
 // error (io.EOF, typically) if the input stream is exhausted — e.g.
@@ -421,9 +436,9 @@ func cmdInit(args []string) error {
 // cmdConfigure updates individual settings (server URL, API key, sync
 // interval) without touching the folder list — unlike re-running `init`,
 // which always builds a fresh config from scratch and would silently
-// wipe out any configured folders. If a service is currently installed,
-// restarts it so the change actually takes effect (Run() only reads
-// config once at startup, no live-reload).
+// wipe out any configured folders. If the background service is
+// currently running, restarts it so the change actually takes effect
+// (Run() only reads config once at startup, no live-reload).
 func cmdConfigure(args []string) error {
 	fs := flag.NewFlagSet("configure", flag.ExitOnError)
 	configPath := addConfigFlag(fs)
@@ -463,7 +478,7 @@ func cmdConfigure(args []string) error {
 
 	installed, system, err := service.Status()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not check whether a service is installed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: could not check whether the background service is running: %v\n", err)
 		return nil
 	}
 	if !installed {
@@ -673,11 +688,11 @@ func printStatusReport(report daemon.StatusReport) {
 	fmt.Printf("%d folder(s) configured\n", report.FolderCount)
 	switch {
 	case !report.ServiceInstalled:
-		fmt.Println("service: not installed (run `receptor-daemon install` to run in the background)")
+		fmt.Println("service: not running in the background (run `receptor-daemon start` to)")
 	case report.ServiceSystemWide:
-		fmt.Println("service: installed system-wide (starts automatically at boot)")
+		fmt.Println("service: running system-wide (starts automatically at boot)")
 	default:
-		fmt.Println("service: installed per-user (starts at login; on Linux, also at boot if lingering is enabled)")
+		fmt.Println("service: running per-user (starts at login; on Linux, also at boot if lingering is enabled)")
 	}
 	if len(report.RecentActivity) > 0 {
 		fmt.Println("recent activity:")
@@ -700,7 +715,14 @@ func cmdRun(args []string) error {
 	return daemon.Run(context.Background(), cfg, *configPath)
 }
 
-// MARK: - install / uninstall
+// MARK: - start / stop
+//
+// These wrap internal/service's Install/Uninstall — "start"/"stop" reads
+// more naturally from the CLI than "install"/"uninstall" (which sound
+// like they're about deploying software, not running an already-
+// configured daemon in the background). The underlying service package
+// keeps the Install/Uninstall names since that's standard vocabulary for
+// what it's actually doing at the systemd/launchd level.
 
 // resolveInstallOptions fills in service.Options' BinaryPath (resolved to
 // an absolute, symlink-free path so the generated unit/plist keeps
@@ -720,10 +742,10 @@ func resolveInstallOptions(configPath string, system bool) (service.Options, err
 	return service.Options{BinaryPath: binaryPath, ConfigPath: absConfigPath, System: system}, nil
 }
 
-func cmdInstall(args []string) error {
-	fs := flag.NewFlagSet("install", flag.ExitOnError)
+func cmdStart(args []string) error {
+	fs := flag.NewFlagSet("start", flag.ExitOnError)
 	configPath := addConfigFlag(fs)
-	system := fs.Bool("system", false, "install system-wide — starts at boot, even without logging in (needs root) — instead of per-user")
+	system := fs.Bool("system", false, "run system-wide — starts at boot, even without logging in (needs root) — instead of per-user")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -739,14 +761,14 @@ func cmdInstall(args []string) error {
 	if err := service.Install(opts); err != nil {
 		return err
 	}
-	fmt.Println("installed and started the receptor-daemon service")
+	fmt.Println("started the receptor-daemon service")
 	return nil
 }
 
-func cmdUninstall(args []string) error {
-	fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
+func cmdStop(args []string) error {
+	fs := flag.NewFlagSet("stop", flag.ExitOnError)
 	configPath := addConfigFlag(fs)
-	system := fs.Bool("system", false, "uninstall the system-wide service instead of the per-user one")
+	system := fs.Bool("system", false, "stop the system-wide service instead of the per-user one")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -759,6 +781,6 @@ func cmdUninstall(args []string) error {
 	if err := service.Uninstall(opts); err != nil {
 		return err
 	}
-	fmt.Println("uninstalled the receptor-daemon service")
+	fmt.Println("stopped the receptor-daemon service")
 	return nil
 }
