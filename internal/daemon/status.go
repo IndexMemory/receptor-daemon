@@ -6,15 +6,18 @@ import (
 
 	"github.com/IndexMemory/receptor-daemon/internal/config"
 	"github.com/IndexMemory/receptor-daemon/internal/core"
+	"github.com/IndexMemory/receptor-daemon/internal/service"
 )
 
 // StatusReport is what `receptor-daemon status` prints.
 type StatusReport struct {
-	Configured     bool
-	Connected      bool
-	ConnectionErr  string
-	FolderCount    int
-	RecentActivity []Entry
+	Configured        bool
+	Connected         bool
+	ConnectionErr     string
+	FolderCount       int
+	RecentActivity    []Entry
+	ServiceInstalled  bool
+	ServiceSystemWide bool
 }
 
 // Status checks the connection (if configured) and returns the most
@@ -40,5 +43,10 @@ func Status(ctx context.Context, cfg config.Config, configPath string) StatusRep
 
 	activityLog := NewActivityLog(filepath.Join(StateDir(configPath), "activity.json"))
 	report.RecentActivity = activityLog.Recent(10)
+
+	if installed, system, err := service.Status(); err == nil {
+		report.ServiceInstalled = installed
+		report.ServiceSystemWide = system
+	}
 	return report
 }

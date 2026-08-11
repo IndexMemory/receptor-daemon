@@ -93,3 +93,15 @@ func TestStatusReportsNotConfigured(t *testing.T) {
 		t.Fatalf("expected not-configured status, got %+v", report)
 	}
 }
+
+func TestStatusReportsServiceNotInstalledInASandboxedHome(t *testing.T) {
+	// service.Status() checks real OS-specific paths (some rooted at
+	// $HOME) — sandbox HOME so this never sees a real install on the
+	// machine running the test.
+	t.Setenv("HOME", t.TempDir())
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	report := Status(context.Background(), config.Config{}, configPath)
+	if report.ServiceInstalled {
+		t.Fatalf("expected no service installed in a sandboxed HOME, got %+v", report)
+	}
+}

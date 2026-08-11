@@ -39,6 +39,8 @@ func main() {
 	switch cmd {
 	case "init":
 		err = cmdInit(args)
+	case "configure":
+		err = cmdConfigure(args)
 	case "folders":
 		err = cmdFolders(args)
 	case "sync":
@@ -73,16 +75,33 @@ Usage:
                                                   interactive setup wizard on
                                                   first use, or a status summary
                                                   if already configured
+  receptor-daemon init                           same interactive wizard,
+                                                  explicitly — safe to re-run
+                                                  any time to review/update your
+                                                  setup, folders included
   receptor-daemon init --server <url> [--api-key <key>]
-                                                  non-interactive setup, for
-                                                  scripts/automation
+                                                  non-interactive setup instead,
+                                                  for scripts/automation
+  receptor-daemon configure [--server <url>] [--api-key <key>]
+                            [--sync-interval-minutes <n>]
+                                                  update settings without
+                                                  touching your folder list;
+                                                  restarts the service
+                                                  automatically if one is
+                                                  installed
   receptor-daemon folders add <path> [--ignore pat,pat]
   receptor-daemon folders remove <path>
   receptor-daemon folders list
   receptor-daemon sync
   receptor-daemon status
   receptor-daemon run
-  receptor-daemon install [--system]
+  receptor-daemon install [--system]             --system starts automatically
+                                                  at boot even without logging
+                                                  in (needs sudo); per-user
+                                                  needs no sudo (Linux: still
+                                                  starts at boot via systemd
+                                                  lingering; macOS: starts at
+                                                  login only)
   receptor-daemon uninstall [--system]
 
 All subcommands accept --config <path> to override the default config
@@ -125,30 +144,61 @@ func cmdDefault() error {
 	}
 
 	printStatusReport(daemon.Status(context.Background(), cfg, configPath))
-	fmt.Println("\nAlready configured. Run `receptor-daemon --help` for the full command list, or `receptor-daemon folders add <path>` to watch another folder.")
+	fmt.Println("\nAlready configured. Run `receptor-daemon init` to review/update your setup, `receptor-daemon --help` for the full command list, or `receptor-daemon folders add <path>` to watch another folder.")
 	return nil
 }
 
+// runSetupWizard is the guided Q&A used both by bare `receptor-daemon`
+// (first run only) and by `receptor-daemon init` called with no flags
+// (any time — an explicit "let's (re)configure" signal). It loads
+// whatever's already at configPath first and uses those values as
+// defaults/starting point, so re-running it never silently wipes
+// existing settings or folders the way the flag-driven `init` path does.
 func runSetupWizard(configPath string) error {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Welcome to Receptor — let's get you set up.")
 	fmt.Println()
 
-	server := promptLine(reader, "Memory server URL", "https://memory.indexmemory.com")
+	existing, err := config.Load(configPath)
+	if err != nil && !errors.Is(err, config.ErrNotInitialized) {
+		return err
+	}
 
+	defaultServer := existing.ServerURL
+	if defaultServer == "" {
+		defaultServer = "https://memory.indexmemory.com"
+	}
+	server, err := promptLine(reader, "Memory server URL", defaultServer)
+	if err != nil {
+		return fmt.Errorf("reading input: %w", err)
+	}
+
+	if existing.APIKey != "" {
+		fmt.Println("Press Enter to keep the current API key, or paste a new one to replace it.")
+	}
 	key, err := promptAPIKey(reader)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading input: %w", err)
+	}
+	if key == "" {
+		key = existing.APIKey
 	}
 	for key == "" {
 		fmt.Println("An API key is required — mint one from Memory's web UI under Settings > API Keys.")
 		key, err = promptAPIKey(reader)
 		if err != nil {
-			return err
+			return fmt.Errorf("reading input: %w", err)
 		}
 	}
 
-	intervalStr := promptLine(reader, "Sync interval in minutes", strconv.Itoa(config.DefaultSyncIntervalMinutes))
+	defaultInterval := existing.SyncIntervalMinutes
+	if defaultInterval <= 0 {
+		defaultInterval = config.DefaultSyncIntervalMinutes
+	}
+	intervalStr, err := promptLine(reader, "Sync interval in minutes", strconv.Itoa(defaultInterval))
+	if err != nil {
+		return fmt.Errorf("reading input: %w", err)
+	}
 	interval, convErr := strconv.Atoi(intervalStr)
 	if convErr != nil || interval <= 0 {
 		fmt.Printf("Invalid interval %q, using the default of %d minutes.\n", intervalStr, config.DefaultSyncIntervalMinutes)
@@ -159,13 +209,38 @@ func runSetupWizard(configPath string) error {
 		ServerURL:           strings.TrimRight(server, "/"),
 		APIKey:              key,
 		SyncIntervalMinutes: interval,
+		Folders:             existing.Folders,
 	}
 
 	fmt.Println()
-	for promptYesNo(reader, "Add a folder to watch now?", true) {
-		path := promptLine(reader, "Folder path", "")
-		if path == "" {
+	// At least one folder is required — a daemon with nothing to watch
+	// is a useless, confusing default state. If folders are already
+	// configured (re-running via `init`), adding more is optional.
+	for {
+		prompt := "Add a folder to watch now?"
+		wantDefault := true
+		if len(cfg.Folders) > 0 {
+			prompt = "Add another folder to watch?"
+			wantDefault = false
+		}
+		addMore, err := promptYesNo(reader, prompt, wantDefault)
+		if err != nil {
+			return fmt.Errorf("reading input: %w", err)
+		}
+		if !addMore {
+			if len(cfg.Folders) == 0 {
+				fmt.Println("At least one folder is required to continue.")
+				continue
+			}
 			break
+		}
+
+		path, err := promptLine(reader, "Folder path", "")
+		if err != nil {
+			return fmt.Errorf("reading input: %w", err)
+		}
+		if path == "" {
+			continue
 		}
 		absPath, err := filepath.Abs(path)
 		if err != nil {
@@ -177,7 +252,10 @@ func runSetupWizard(configPath string) error {
 			fmt.Printf("%s is not an accessible directory, skipping\n", absPath)
 			continue
 		}
-		ignoreStr := promptLine(reader, "Ignore patterns (comma-separated, optional)", "")
+		ignoreStr, err := promptLine(reader, "Ignore patterns (comma-separated, optional)", "")
+		if err != nil {
+			return fmt.Errorf("reading input: %w", err)
+		}
 		if cfg.AddFolder(absPath, splitPatterns(ignoreStr)) {
 			fmt.Printf("added %s\n", absPath)
 		} else {
@@ -203,22 +281,22 @@ func runSetupWizard(configPath string) error {
 	}
 
 	fmt.Println()
-	if promptYesNo(reader, "Install as a background service now?", true) {
-		system := promptYesNo(reader, "System-wide install (needs sudo)? Otherwise per-user, no sudo needed", false)
+	installNow, err := promptYesNo(reader, "Install as a background service now?", true)
+	if err != nil {
+		return fmt.Errorf("reading input: %w", err)
+	}
+	if installNow {
+		fmt.Println("A system-wide install starts automatically at boot, even without logging in, but needs sudo.")
+		fmt.Println("A per-user install needs no sudo — on Linux it can still start at boot via systemd lingering; on macOS it only starts once you log in.")
+		systemWide, err := promptYesNo(reader, "Use a system-wide install?", false)
+		if err != nil {
+			return fmt.Errorf("reading input: %w", err)
+		}
 
-		binaryPath, err := os.Executable()
+		opts, err := resolveInstallOptions(configPath, systemWide)
 		if err != nil {
 			return err
 		}
-		if resolved, err := filepath.EvalSymlinks(binaryPath); err == nil {
-			binaryPath = resolved
-		}
-		absConfigPath, err := filepath.Abs(configPath)
-		if err != nil {
-			return err
-		}
-
-		opts := service.Options{BinaryPath: binaryPath, ConfigPath: absConfigPath, System: system}
 		if err := service.Install(opts); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not install the service: %v\n", err)
 		} else {
@@ -232,32 +310,44 @@ func runSetupWizard(configPath string) error {
 
 // promptLine prints label (with def shown as the value used on empty
 // input, if any) and returns the trimmed line the user typed.
-func promptLine(reader *bufio.Reader, label, def string) string {
+// promptLine prints label (with def shown as the value used on empty
+// input, if any) and returns the trimmed line the user typed. Returns an
+// error (io.EOF, typically) if the input stream is exhausted — e.g.
+// piped input ran out, or the user hit Ctrl+D — so callers can abort
+// instead of treating a dead input stream as an endless string of
+// "pressed Enter for the default" answers.
+func promptLine(reader *bufio.Reader, label, def string) (string, error) {
 	if def != "" {
 		fmt.Printf("%s [%s]: ", label, def)
 	} else {
 		fmt.Printf("%s: ", label)
 	}
-	line, _ := reader.ReadString('\n')
+	line, err := reader.ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return def
+		return def, nil
 	}
-	return line
+	return line, nil
 }
 
-func promptYesNo(reader *bufio.Reader, label string, def bool) bool {
+func promptYesNo(reader *bufio.Reader, label string, def bool) (bool, error) {
 	suffix := "[Y/n]"
 	if !def {
 		suffix = "[y/N]"
 	}
 	fmt.Printf("%s %s: ", label, suffix)
-	line, _ := reader.ReadString('\n')
+	line, err := reader.ReadString('\n')
+	if err != nil && line == "" {
+		return false, err
+	}
 	line = strings.ToLower(strings.TrimSpace(line))
 	if line == "" {
-		return def
+		return def, nil
 	}
-	return line == "y" || line == "yes"
+	return line == "y" || line == "yes", nil
 }
 
 // MARK: - init
@@ -267,9 +357,18 @@ func cmdInit(args []string) error {
 	configPath := addConfigFlag(fs)
 	server := fs.String("server", "", "Memory server URL, e.g. https://memory.indexmemory.com")
 	apiKey := fs.String("api-key", "", "Memory API key (if omitted, you'll be prompted)")
-	interval := fs.Int("sync-interval-minutes", config.DefaultSyncIntervalMinutes, "how often to sync, in minutes")
+	interval := fs.Int("sync-interval-minutes", 0, "how often to sync, in minutes (default 15)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// No setup flags at all -> the guided wizard instead of erroring out
+	// demanding --server. Safe to run even on an already-configured
+	// install (e.g. to review/update it): the wizard loads and preserves
+	// whatever's already there, folders included, rather than wiping it
+	// the way the flag-driven path below does.
+	if *server == "" && *apiKey == "" && *interval == 0 {
+		return runSetupWizard(*configPath)
 	}
 
 	if *server == "" {
@@ -290,10 +389,14 @@ func cmdInit(args []string) error {
 		return fmt.Errorf("could not resolve a default config path — pass --config explicitly")
 	}
 
+	effectiveInterval := *interval
+	if effectiveInterval <= 0 {
+		effectiveInterval = config.DefaultSyncIntervalMinutes
+	}
 	cfg := config.Config{
 		ServerURL:           strings.TrimRight(*server, "/"),
 		APIKey:              key,
-		SyncIntervalMinutes: *interval,
+		SyncIntervalMinutes: effectiveInterval,
 	}
 	if err := config.Save(*configPath, cfg); err != nil {
 		return fmt.Errorf("writing config: %w", err)
@@ -310,6 +413,76 @@ func cmdInit(args []string) error {
 	default:
 		fmt.Println("connection verified")
 	}
+	return nil
+}
+
+// MARK: - configure
+
+// cmdConfigure updates individual settings (server URL, API key, sync
+// interval) without touching the folder list — unlike re-running `init`,
+// which always builds a fresh config from scratch and would silently
+// wipe out any configured folders. If a service is currently installed,
+// restarts it so the change actually takes effect (Run() only reads
+// config once at startup, no live-reload).
+func cmdConfigure(args []string) error {
+	fs := flag.NewFlagSet("configure", flag.ExitOnError)
+	configPath := addConfigFlag(fs)
+	server := fs.String("server", "", "update the Memory server URL")
+	apiKey := fs.String("api-key", "", "update the Memory API key")
+	interval := fs.Int("sync-interval-minutes", 0, "update the sync interval, in minutes")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+
+	changed := false
+	if *server != "" {
+		cfg.ServerURL = strings.TrimRight(*server, "/")
+		changed = true
+	}
+	if *apiKey != "" {
+		cfg.APIKey = *apiKey
+		changed = true
+	}
+	if *interval > 0 {
+		cfg.SyncIntervalMinutes = *interval
+		changed = true
+	}
+	if !changed {
+		return fmt.Errorf("nothing to change — pass at least one of --server, --api-key, --sync-interval-minutes")
+	}
+
+	if err := config.Save(*configPath, cfg); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	fmt.Printf("updated config at %s\n", *configPath)
+
+	installed, system, err := service.Status()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not check whether a service is installed: %v\n", err)
+		return nil
+	}
+	if !installed {
+		return nil
+	}
+
+	opts, err := resolveInstallOptions(*configPath, system)
+	if err != nil {
+		return err
+	}
+	if err := service.Uninstall(opts); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not restart the running service — the change won't take effect until you do so manually: %v\n", err)
+		return nil
+	}
+	if err := service.Install(opts); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not restart the running service — the change won't take effect until you do so manually: %v\n", err)
+		return nil
+	}
+	fmt.Println("restarted the running service to pick up the change")
 	return nil
 }
 
@@ -498,6 +671,14 @@ func printStatusReport(report daemon.StatusReport) {
 		fmt.Printf("not connected: %s\n", report.ConnectionErr)
 	}
 	fmt.Printf("%d folder(s) configured\n", report.FolderCount)
+	switch {
+	case !report.ServiceInstalled:
+		fmt.Println("service: not installed (run `receptor-daemon install` to run in the background)")
+	case report.ServiceSystemWide:
+		fmt.Println("service: installed system-wide (starts automatically at boot)")
+	default:
+		fmt.Println("service: installed per-user (starts at login; on Linux, also at boot if lingering is enabled)")
+	}
 	if len(report.RecentActivity) > 0 {
 		fmt.Println("recent activity:")
 		for _, e := range report.RecentActivity {
@@ -521,10 +702,28 @@ func cmdRun(args []string) error {
 
 // MARK: - install / uninstall
 
+// resolveInstallOptions fills in service.Options' BinaryPath (resolved to
+// an absolute, symlink-free path so the generated unit/plist keeps
+// working regardless of how it was invoked) and ConfigPath.
+func resolveInstallOptions(configPath string, system bool) (service.Options, error) {
+	binaryPath, err := os.Executable()
+	if err != nil {
+		return service.Options{}, err
+	}
+	if resolved, err := filepath.EvalSymlinks(binaryPath); err == nil {
+		binaryPath = resolved
+	}
+	absConfigPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return service.Options{}, err
+	}
+	return service.Options{BinaryPath: binaryPath, ConfigPath: absConfigPath, System: system}, nil
+}
+
 func cmdInstall(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	configPath := addConfigFlag(fs)
-	system := fs.Bool("system", false, "install system-wide (needs root) instead of per-user")
+	system := fs.Bool("system", false, "install system-wide — starts at boot, even without logging in (needs root) — instead of per-user")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -533,19 +732,10 @@ func cmdInstall(args []string) error {
 		return err
 	}
 
-	binaryPath, err := os.Executable()
+	opts, err := resolveInstallOptions(*configPath, *system)
 	if err != nil {
 		return err
 	}
-	if resolved, err := filepath.EvalSymlinks(binaryPath); err == nil {
-		binaryPath = resolved
-	}
-	absConfigPath, err := filepath.Abs(*configPath)
-	if err != nil {
-		return err
-	}
-
-	opts := service.Options{BinaryPath: binaryPath, ConfigPath: absConfigPath, System: *system}
 	if err := service.Install(opts); err != nil {
 		return err
 	}

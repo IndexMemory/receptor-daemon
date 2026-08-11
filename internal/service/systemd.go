@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 )
 
@@ -77,7 +78,49 @@ func Install(opts Options) error {
 	if err := runSystemctl(opts.System, "enable", "--now", systemdUnitName); err != nil {
 		return fmt.Errorf("systemctl enable --now: %w", err)
 	}
+	if !opts.System {
+		// Without lingering, a --user unit only starts at login, not at
+		// boot — defeating the point of "run on server start" for a
+		// headless machine nobody ever logs into interactively.
+		// Best-effort: not fatal if loginctl is unavailable or refuses
+		// (e.g. some restricted/containerized setups) — the service still
+		// works, just login-scoped in that case.
+		_ = enableLinger()
+	}
 	return nil
+}
+
+func enableLinger() error {
+	u, err := user.Current()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("loginctl", "enable-linger", u.Username)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// Status reports whether a systemd unit is currently installed (unit
+// file present on disk — the ground truth, not a separately tracked
+// flag that could drift from reality) and whether it's the system-wide
+// or per-user one. Checks the system path first.
+func Status() (installed bool, system bool, err error) {
+	sysPath, err := systemdUnitPath(true)
+	if err != nil {
+		return false, false, err
+	}
+	if _, statErr := os.Stat(sysPath); statErr == nil {
+		return true, true, nil
+	}
+	userPath, err := systemdUnitPath(false)
+	if err != nil {
+		return false, false, err
+	}
+	if _, statErr := os.Stat(userPath); statErr == nil {
+		return true, false, nil
+	}
+	return false, false, nil
 }
 
 // Uninstall stops, disables, and removes the systemd unit file.

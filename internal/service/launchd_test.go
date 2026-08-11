@@ -76,3 +76,45 @@ func TestInstallWritesPlistFileWithGeneratedContent(t *testing.T) {
 		t.Fatalf("unexpected plist file contents:\n%s", data)
 	}
 }
+
+func TestStatusReportsNotInstalledWhenNoPlistExists(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	installed, _, err := Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installed {
+		t.Fatal("expected not installed when no plist exists")
+	}
+}
+
+func TestStatusReportsInstalledUserScopeAfterWritingPlist(t *testing.T) {
+	// Only exercises the per-user path — writing to the real
+	// /Library/LaunchDaemons would require root and pollute the test
+	// host, so the system-scope branch is covered by code review, not a
+	// test.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := launchdPlistPath(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{BinaryPath: "/usr/local/bin/receptor-daemon", ConfigPath: filepath.Join(home, "config.json")}
+	if err := os.WriteFile(path, []byte(launchdPlistContent(opts)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	installed, system, err := Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !installed || system {
+		t.Fatalf("expected installed=true, system=false; got installed=%v system=%v", installed, system)
+	}
+}

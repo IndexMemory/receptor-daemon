@@ -105,3 +105,31 @@ func Uninstall(opts Options) error {
 	}
 	return nil
 }
+
+// Status reports whether a launchd plist is currently installed (file
+// present on disk) and whether it's the system-wide LaunchDaemon or the
+// per-user LaunchAgent. Checks the system path first.
+//
+// Note the platform difference this surfaces: a LaunchDaemon
+// (System: true) is loaded by launchd at boot, independent of any login
+// — the macOS equivalent of systemd's --system scope. A LaunchAgent
+// (System: false) only loads at user login; unlike systemd, there's no
+// "linger"-style workaround on macOS to make a per-user job start at
+// boot without a login session.
+func Status() (installed bool, system bool, err error) {
+	sysPath, err := launchdPlistPath(true)
+	if err != nil {
+		return false, false, err
+	}
+	if _, statErr := os.Stat(sysPath); statErr == nil {
+		return true, true, nil
+	}
+	userPath, err := launchdPlistPath(false)
+	if err != nil {
+		return false, false, err
+	}
+	if _, statErr := os.Stat(userPath); statErr == nil {
+		return true, false, nil
+	}
+	return false, false, nil
+}

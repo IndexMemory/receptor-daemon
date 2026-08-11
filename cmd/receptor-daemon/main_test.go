@@ -8,7 +8,10 @@ import (
 
 func TestPromptLineReturnsDefaultOnEmptyInput(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("\n"))
-	got := promptLine(reader, "Server", "https://memory.indexmemory.com")
+	got, err := promptLine(reader, "Server", "https://memory.indexmemory.com")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != "https://memory.indexmemory.com" {
 		t.Fatalf("expected default returned, got %q", got)
 	}
@@ -16,19 +19,42 @@ func TestPromptLineReturnsDefaultOnEmptyInput(t *testing.T) {
 
 func TestPromptLineReturnsTrimmedTypedValue(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("  /srv/docs  \n"))
-	got := promptLine(reader, "Folder path", "")
+	got, err := promptLine(reader, "Folder path", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != "/srv/docs" {
 		t.Fatalf("expected trimmed input, got %q", got)
 	}
 }
 
+func TestPromptLineReturnsErrorOnExhaustedInput(t *testing.T) {
+	// A real bug this guards against: silently treating EOF (piped input
+	// ran out, or Ctrl+D) the same as "pressed Enter for the default"
+	// causes an infinite loop in any caller that keeps re-prompting until
+	// it gets a non-default answer (e.g. the setup wizard's "at least one
+	// folder is required" loop).
+	reader := bufio.NewReader(strings.NewReader(""))
+	if _, err := promptLine(reader, "Folder path", ""); err == nil {
+		t.Fatal("expected an error when the input stream is exhausted")
+	}
+}
+
 func TestPromptYesNoDefaultsOnEmptyInput(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("\n"))
-	if !promptYesNo(reader, "Continue?", true) {
+	got, err := promptYesNo(reader, "Continue?", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got {
 		t.Fatal("expected default true on empty input")
 	}
 	reader2 := bufio.NewReader(strings.NewReader("\n"))
-	if promptYesNo(reader2, "Continue?", false) {
+	got2, err := promptYesNo(reader2, "Continue?", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got2 {
 		t.Fatal("expected default false on empty input")
 	}
 }
@@ -37,10 +63,20 @@ func TestPromptYesNoParsesYAndNVariants(t *testing.T) {
 	cases := map[string]bool{"y\n": true, "yes\n": true, "Y\n": true, "n\n": false, "no\n": false, "N\n": false}
 	for input, want := range cases {
 		reader := bufio.NewReader(strings.NewReader(input))
-		got := promptYesNo(reader, "?", !want) // default is the opposite, so a wrong parse would flip the result
+		got, err := promptYesNo(reader, "?", !want) // default is the opposite, so a wrong parse would flip the result
+		if err != nil {
+			t.Fatal(err)
+		}
 		if got != want {
 			t.Errorf("input %q: expected %v, got %v", input, want, got)
 		}
+	}
+}
+
+func TestPromptYesNoReturnsErrorOnExhaustedInput(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader(""))
+	if _, err := promptYesNo(reader, "Continue?", true); err == nil {
+		t.Fatal("expected an error when the input stream is exhausted")
 	}
 }
 

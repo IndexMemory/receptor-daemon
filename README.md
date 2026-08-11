@@ -47,6 +47,23 @@ mv receptor-daemon-linux-amd64 /usr/local/bin/receptor-daemon
 
 ## Usage
 
+Easiest path: just run `receptor-daemon` with no arguments. On first run
+it walks you through setup interactively (server URL, API key, sync
+interval, at least one folder — it won't let you finish with zero, since
+a daemon watching nothing is useless — and an optional service install
+right there); on later runs it just prints a quick status summary instead
+of re-running setup over your working config.
+
+Want to review or update your setup later? Run `receptor-daemon init`
+(with no flags) any time — same wizard, explicitly, and safe to re-run:
+it loads whatever's already configured and uses it as the defaults/
+starting point (press Enter to keep a value, including the current API
+key), so it never wipes your folder list the way naively rebuilding the
+config from scratch would.
+
+Everything is also available as explicit subcommands, for scripting or
+if you'd rather not go through the wizard:
+
 ```sh
 # One-time setup — prompts for the API key without echoing it to the
 # terminal (or pass --api-key directly, which does leave it in shell history)
@@ -57,11 +74,17 @@ receptor-daemon folders add /srv/shared-docs --ignore node_modules,*.tmp
 receptor-daemon folders list
 receptor-daemon folders remove /srv/shared-docs
 
+# Update settings later without touching your folder list — unlike
+# re-running `init`, which always rebuilds the config from scratch and
+# would wipe your folders out. Restarts the running service automatically
+# if one is installed, so the change actually takes effect.
+receptor-daemon configure --sync-interval-minutes 30
+
 # One-shot manual sync (useful for testing, or a cron-based setup instead
 # of a long-running service)
 receptor-daemon sync
 
-# Connection + recent activity
+# Connection, folder count, service status, and recent activity
 receptor-daemon status
 
 # Install as a background service (systemd on Linux, launchd on macOS).
@@ -69,10 +92,22 @@ receptor-daemon status
 receptor-daemon install
 receptor-daemon uninstall
 
-# System-wide install instead (runs independent of any user session,
-# needs root/sudo)
+# System-wide install instead — needs sudo
 sudo receptor-daemon install --system
 ```
+
+**Starting automatically on boot** — this is where the two install modes
+genuinely differ, not just in whether they need sudo:
+- **`--system`**: starts at boot on both platforms, independent of any
+  login — the systemd unit targets `multi-user.target`; the launchd job
+  is a `LaunchDaemon`. This is what you want on a headless server nobody
+  ever logs into interactively.
+- **Per-user (default)**: on Linux, `install` also runs `loginctl
+  enable-linger` for you as a best-effort step, so even a per-user
+  systemd unit starts at boot without requiring a login session. On
+  macOS, there's no equivalent — a per-user `LaunchAgent` only starts
+  when you log in; there's no "linger" workaround for that on macOS, so
+  use `--system` there if you need true boot-time start without a login.
 
 Flags must come before the positional argument for a given subcommand
 (standard Go `flag` package behavior), e.g.
@@ -163,9 +198,11 @@ like Multipass, which default to arm64 guests on ARM hosts.
 - **No package manager distribution** — no `.deb`, no Homebrew formula
   yet. Ships as a plain binary via GitHub Releases, same tradeoff already
   made for the other two Receptor apps.
-- **`install`/`uninstall` haven't been verified against a real running
-  systemd/launchd instance** — verified so far only that the unit/plist
-  file content and paths are correct (including inside a plain Docker
-  container, which has no systemd running, so the actual
-  `systemctl`/`launchctl` invocation is untested). Needs a real Linux box
-  and a real Mac to confirm end-to-end.
+- **`install`/`uninstall` confirmed working against a real launchd on
+  macOS** (per-user install). **Still unverified against a real
+  systemd** — so far only confirmed that the unit file content/paths are
+  correct and that it fails cleanly when `systemctl` isn't available
+  (e.g. inside a plain Docker container, which has no init system
+  running). Needs a real Linux box (or a VM with real systemd, e.g. via
+  Multipass) to confirm end-to-end, including the `loginctl
+  enable-linger` boot-start behavior.
