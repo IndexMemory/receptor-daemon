@@ -1,0 +1,90 @@
+//go:build linux
+
+package service
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestSystemdUnitContentIncludesBinaryAndConfigPaths(t *testing.T) {
+	content := systemdUnitContent(Options{BinaryPath: "/usr/local/bin/receptor-daemon", ConfigPath: "/home/alice/.config/receptor-daemon/config.json"})
+	if !strings.Contains(content, "ExecStart=/usr/local/bin/receptor-daemon run --config /home/alice/.config/receptor-daemon/config.json") {
+		t.Fatalf("unexpected unit content:\n%s", content)
+	}
+}
+
+func TestSystemdUnitContentTargetDiffersByScope(t *testing.T) {
+	user := systemdUnitContent(Options{System: false})
+	system := systemdUnitContent(Options{System: true})
+	if !strings.Contains(user, "WantedBy=default.target") {
+		t.Fatalf("expected user-scope unit to target default.target:\n%s", user)
+	}
+	if !strings.Contains(system, "WantedBy=multi-user.target") {
+		t.Fatalf("expected system-scope unit to target multi-user.target:\n%s", system)
+	}
+}
+
+func TestSystemdUnitPathDiffersByScope(t *testing.T) {
+	systemPath, err := systemdUnitPath(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if systemPath != "/etc/systemd/system/receptor-daemon.service" {
+		t.Fatalf("unexpected system unit path: %s", systemPath)
+	}
+
+	userPath, err := systemdUnitPath(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(userPath, filepath.Join(".config", "systemd", "user", "receptor-daemon.service")) {
+		t.Fatalf("unexpected user unit path: %s", userPath)
+	}
+	if !filepath.IsAbs(userPath) {
+		t.Fatalf("expected absolute user unit path, got %s", userPath)
+	}
+}
+
+func TestSystemctlArgsPrependsUserFlagUnlessSystem(t *testing.T) {
+	userArgs := systemctlArgs(false, "enable", "--now", "receptor-daemon.service")
+	if userArgs[0] != "--user" {
+		t.Fatalf("expected --user flag prepended, got %v", userArgs)
+	}
+
+	systemArgs := systemctlArgs(true, "enable", "--now", "receptor-daemon.service")
+	if systemArgs[0] == "--user" {
+		t.Fatalf("did not expect --user flag for system scope, got %v", systemArgs)
+	}
+}
+
+func TestInstallWritesUnitFileWithGeneratedContent(t *testing.T) {
+	// Exercise the file-writing half of Install without invoking the real
+	// systemctl binary (which likely isn't running as a usable service
+	// manager inside a CI/test sandbox) by calling systemdUnitPath +
+	// os.WriteFile directly, the same way Install does internally.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := systemdUnitPath(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{BinaryPath: "/usr/local/bin/receptor-daemon", ConfigPath: "/tmp/config.json"}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(systemdUnitContent(opts)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "/usr/local/bin/receptor-daemon") {
+		t.Fatalf("unexpected unit file contents:\n%s", data)
+	}
+}

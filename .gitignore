@@ -1,0 +1,8 @@
+.DS_Store
+/bin/
+/dist/
+*.test
+/receptor-daemon
+/receptor-daemon-linux-amd64
+/receptor-daemon-darwin-amd64
+/receptor-daemon-darwin-arm64
