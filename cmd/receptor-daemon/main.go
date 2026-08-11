@@ -46,8 +46,6 @@ func main() {
 	switch cmd {
 	case "init":
 		err = cmdInit(args)
-	case "configure":
-		err = cmdConfigure(args)
 	case "folders":
 		err = cmdFolders(args)
 	case "sync":
@@ -89,22 +87,20 @@ Usage:
                                                   explicitly — safe to re-run
                                                   any time to review/update your
                                                   setup, folders included
-  receptor-daemon init --server <url> [--api-key <key>]
-                                                  non-interactive setup instead,
-                                                  for scripts/automation
-  receptor-daemon configure [--server <url>] [--api-key <key>]
-                            [--sync-interval-minutes <n>]
-                                                  update settings without
-                                                  touching your folder list;
-                                                  restarts the background
-                                                  service automatically if
-                                                  one is running
+  receptor-daemon init [--server <url>] [--api-key <key>]
+                       [--sync-interval-minutes <n>]
+                                                  non-interactive instead: sets
+                                                  up (first run) or updates
+                                                  (later) only the flags given,
+                                                  without touching your folder
+                                                  list; restarts the background
+                                                  service automatically if one
+                                                  is running
   receptor-daemon folders add <path> [--ignore pat,pat]
   receptor-daemon folders remove <path>
   receptor-daemon folders list
   receptor-daemon sync
   receptor-daemon status
-  receptor-daemon run
   receptor-daemon start [--system]               runs it in the background from
                                                   now on, via systemd/launchd;
                                                   --system starts automatically
@@ -120,6 +116,10 @@ Usage:
                                                   check this if something
                                                   documented here seems missing,
                                                   you may be on an old binary
+
+("receptor-daemon run" runs the sync loop directly in the foreground —
+what "start" sets up to happen automatically in the background instead.
+You should never need to type it yourself.)
 
 All subcommands accept --config <path> to override the default config
 location (`+defaultConfigPathForUsage()+`).
@@ -170,7 +170,7 @@ func cmdDefault() error {
 // (any time — an explicit "let's (re)configure" signal). It loads
 // whatever's already at configPath first and uses those values as
 // defaults/starting point, so re-running it never silently wipes
-// existing settings or folders the way the flag-driven `init` path does.
+// existing settings or folders.
 func runSetupWizard(configPath string) error {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Welcome to Receptor — let's get you set up.")
@@ -367,52 +367,68 @@ func promptYesNo(reader *bufio.Reader, label string, def bool) (bool, error) {
 
 // MARK: - init
 
+// cmdInit: no flags -> the interactive wizard. Any flags -> a
+// non-interactive equivalent that works for both first-time scripted
+// setup and later updates: loads whatever's already at configPath (if
+// anything), overwrites only the fields explicitly passed, and never
+// touches the folder list. This absorbed what used to be a separate
+// `configure` command — the two took the same three flags and looked
+// confusingly similar, so now there's just one. If the background
+// service is currently running, it's restarted so the change actually
+// takes effect (Run() only reads config once at startup, no live-reload).
 func cmdInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	configPath := addConfigFlag(fs)
 	server := fs.String("server", "", "Memory server URL, e.g. https://memory.indexmemory.com")
-	apiKey := fs.String("api-key", "", "Memory API key (if omitted, you'll be prompted)")
-	interval := fs.Int("sync-interval-minutes", 0, "how often to sync, in minutes (default 15)")
+	apiKey := fs.String("api-key", "", "Memory API key")
+	interval := fs.Int("sync-interval-minutes", 0, "how often to sync, in minutes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	// No setup flags at all -> the guided wizard instead of erroring out
-	// demanding --server. Safe to run even on an already-configured
-	// install (e.g. to review/update it): the wizard loads and preserves
-	// whatever's already there, folders included, rather than wiping it
-	// the way the flag-driven path below does.
 	if *server == "" && *apiKey == "" && *interval == 0 {
 		return runSetupWizard(*configPath)
-	}
-
-	if *server == "" {
-		return fmt.Errorf("--server is required, e.g. --server https://memory.indexmemory.com")
-	}
-	key := *apiKey
-	if key == "" {
-		var err error
-		key, err = promptAPIKey(bufio.NewReader(os.Stdin))
-		if err != nil {
-			return err
-		}
-	}
-	if key == "" {
-		return fmt.Errorf("an API key is required — mint one from Memory's web UI under Settings > API Keys")
 	}
 	if *configPath == "" {
 		return fmt.Errorf("could not resolve a default config path — pass --config explicitly")
 	}
 
-	effectiveInterval := *interval
-	if effectiveInterval <= 0 {
-		effectiveInterval = config.DefaultSyncIntervalMinutes
+	existing, loadErr := config.Load(*configPath)
+	notYetInitialized := errors.Is(loadErr, config.ErrNotInitialized)
+	if loadErr != nil && !notYetInitialized {
+		return loadErr
 	}
-	cfg := config.Config{
-		ServerURL:           strings.TrimRight(*server, "/"),
-		APIKey:              key,
-		SyncIntervalMinutes: effectiveInterval,
+	if notYetInitialized && *server == "" {
+		return fmt.Errorf("--server is required for first-time setup, e.g. --server https://memory.indexmemory.com")
 	}
+
+	cfg := existing
+	if *server != "" {
+		cfg.ServerURL = strings.TrimRight(*server, "/")
+	}
+	if *apiKey != "" {
+		cfg.APIKey = *apiKey
+	}
+	if cfg.APIKey == "" {
+		// No key on file and none given via flag -> prompt (masked),
+		// same as this command has always done for first-time
+		// non-interactive setup.
+		key, err := promptAPIKey(bufio.NewReader(os.Stdin))
+		if err != nil {
+			return err
+		}
+		cfg.APIKey = key
+	}
+	if cfg.APIKey == "" {
+		return fmt.Errorf("an API key is required — mint one from Memory's web UI under Settings > API Keys")
+	}
+	if *interval > 0 {
+		cfg.SyncIntervalMinutes = *interval
+	}
+	if cfg.SyncIntervalMinutes <= 0 {
+		cfg.SyncIntervalMinutes = config.DefaultSyncIntervalMinutes
+	}
+
 	if err := config.Save(*configPath, cfg); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
@@ -428,77 +444,37 @@ func cmdInit(args []string) error {
 	default:
 		fmt.Println("connection verified")
 	}
+
+	restartServiceIfRunning(*configPath)
 	return nil
 }
 
-// MARK: - configure
-
-// cmdConfigure updates individual settings (server URL, API key, sync
-// interval) without touching the folder list — unlike re-running `init`,
-// which always builds a fresh config from scratch and would silently
-// wipe out any configured folders. If the background service is
-// currently running, restarts it so the change actually takes effect
-// (Run() only reads config once at startup, no live-reload).
-func cmdConfigure(args []string) error {
-	fs := flag.NewFlagSet("configure", flag.ExitOnError)
-	configPath := addConfigFlag(fs)
-	server := fs.String("server", "", "update the Memory server URL")
-	apiKey := fs.String("api-key", "", "update the Memory API key")
-	interval := fs.Int("sync-interval-minutes", 0, "update the sync interval, in minutes")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	cfg, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-
-	changed := false
-	if *server != "" {
-		cfg.ServerURL = strings.TrimRight(*server, "/")
-		changed = true
-	}
-	if *apiKey != "" {
-		cfg.APIKey = *apiKey
-		changed = true
-	}
-	if *interval > 0 {
-		cfg.SyncIntervalMinutes = *interval
-		changed = true
-	}
-	if !changed {
-		return fmt.Errorf("nothing to change — pass at least one of --server, --api-key, --sync-interval-minutes")
-	}
-
-	if err := config.Save(*configPath, cfg); err != nil {
-		return fmt.Errorf("writing config: %w", err)
-	}
-	fmt.Printf("updated config at %s\n", *configPath)
-
+// restartServiceIfRunning restarts the background service, if one is
+// currently running, so a config change actually takes effect. The
+// config write has already succeeded by the time this is called, so
+// failures here are reported as warnings rather than propagated as a
+// command failure.
+func restartServiceIfRunning(configPath string) {
 	installed, system, err := service.Status()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not check whether the background service is running: %v\n", err)
-		return nil
+		return
 	}
 	if !installed {
-		return nil
+		return
 	}
-
-	opts, err := resolveInstallOptions(*configPath, system)
+	opts, err := resolveInstallOptions(configPath, system)
+	if err == nil {
+		err = service.Uninstall(opts)
+	}
+	if err == nil {
+		err = service.Install(opts)
+	}
 	if err != nil {
-		return err
-	}
-	if err := service.Uninstall(opts); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not restart the running service — the change won't take effect until you do so manually: %v\n", err)
-		return nil
-	}
-	if err := service.Install(opts); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not restart the running service — the change won't take effect until you do so manually: %v\n", err)
-		return nil
+		return
 	}
 	fmt.Println("restarted the running service to pick up the change")
-	return nil
 }
 
 // promptAPIKey reads the key without echoing it to the terminal, so it

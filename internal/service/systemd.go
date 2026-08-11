@@ -62,6 +62,9 @@ func runSystemctl(system bool, args ...string) error {
 
 // Install writes the systemd unit file and enables + starts it.
 func Install(opts Options) error {
+	if err := guardAgainstRootPerUserInstall(opts); err != nil {
+		return err
+	}
 	path, err := systemdUnitPath(opts.System)
 	if err != nil {
 		return err
@@ -125,6 +128,9 @@ func Status() (installed bool, system bool, err error) {
 
 // Uninstall stops, disables, and removes the systemd unit file.
 func Uninstall(opts Options) error {
+	if err := guardAgainstRootPerUserInstall(opts); err != nil {
+		return err
+	}
 	// Best-effort: the unit may already be stopped/missing.
 	_ = runSystemctl(opts.System, "disable", "--now", systemdUnitName)
 

@@ -71,7 +71,15 @@ func runLaunchctl(args ...string) error {
 }
 
 // Install writes the launchd plist and bootstraps (loads + starts) it.
+// Safe to call again on an already-running job (e.g. re-running `start`,
+// or a previous binary version's job still loaded under the same label):
+// unlike systemd's `enable`, launchd's `bootstrap` errors out (EIO) if
+// the label is already loaded in the target domain, so any existing
+// registration is cleared first.
 func Install(opts Options) error {
+	if err := guardAgainstRootPerUserInstall(opts); err != nil {
+		return err
+	}
 	path, err := launchdPlistPath(opts.System)
 	if err != nil {
 		return err
@@ -85,6 +93,8 @@ func Install(opts Options) error {
 	if err := os.WriteFile(path, []byte(launchdPlistContent(opts)), 0o644); err != nil {
 		return err
 	}
+	// Best-effort: harmless/expected to fail when nothing was loaded yet.
+	_ = runLaunchctl("bootout", domainTarget(opts.System)+"/"+launchdLabel)
 	if err := runLaunchctl("bootstrap", domainTarget(opts.System), path); err != nil {
 		return fmt.Errorf("launchctl bootstrap: %w", err)
 	}
@@ -93,6 +103,9 @@ func Install(opts Options) error {
 
 // Uninstall stops (bootout) and removes the launchd plist.
 func Uninstall(opts Options) error {
+	if err := guardAgainstRootPerUserInstall(opts); err != nil {
+		return err
+	}
 	path, err := launchdPlistPath(opts.System)
 	if err != nil {
 		return err

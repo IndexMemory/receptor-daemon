@@ -74,11 +74,11 @@ receptor-daemon folders add /srv/shared-docs --ignore node_modules,*.tmp
 receptor-daemon folders list
 receptor-daemon folders remove /srv/shared-docs
 
-# Update settings later without touching your folder list — unlike
-# re-running `init`, which always rebuilds the config from scratch and
-# would wipe your folders out. Restarts the background service
-# automatically if one is running, so the change actually takes effect.
-receptor-daemon configure --sync-interval-minutes 30
+# Update settings later — same `init` command, just called again with
+# only the flag(s) you want to change. Never touches your folder list,
+# and restarts the background service automatically if one is running,
+# so the change actually takes effect.
+receptor-daemon init --sync-interval-minutes 30
 
 # One-shot manual sync (useful for testing, or a cron-based setup instead
 # of a long-running service)
@@ -123,10 +123,13 @@ location (an XDG-style per-user config directory:
 `~/.config/receptor-daemon/config.json` on Linux,
 `~/Library/Application Support/receptor-daemon/config.json` on macOS).
 
-`receptor-daemon run` is the actual foreground sync loop — what the
-background service executes once `start` has set it up. You normally
-don't run this directly except to test; use `start` to run it as a
-proper background service instead.
+There's also a `receptor-daemon run` command — the actual foreground sync
+loop, which is what the background service executes once `start` has set
+it up (its systemd unit / launchd plist literally execs `receptor-daemon
+run --config ...`). You should never need to type this yourself; use
+`start` to run it as a proper background service instead. It's
+intentionally left out of `--help`'s main listing so it doesn't look like
+a second way to do what `start` does — it's what `start` uses internally.
 
 ## Config file
 
