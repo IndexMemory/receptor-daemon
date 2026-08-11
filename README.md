@@ -141,6 +141,14 @@ needs a real service manager, which isn't available in CI containers).
 platforms' code paths (including the platform-specific `internal/service`
 files, since each runner only compiles its own OS's build-tagged file).
 
+`.github/workflows/release.yml` builds `linux-amd64`, `darwin-amd64`, and
+`darwin-arm64` binaries and publishes them to a GitHub Release on a
+`v*.*.*` tag push (or manual dispatch). Unlike `receptor-desktop`, this
+module has no cgo dependencies at all, so all three are true
+cross-compiles from a single `ubuntu-latest` runner — no native macOS
+builder needed just to produce the binary (macOS is still needed
+separately, via `ci.yml`, to actually *run* the darwin-tagged tests).
+
 ## Known limitations / not yet implemented
 
 - **Not admin-gated**, unlike the OAuth path in `receptor-ios`/
