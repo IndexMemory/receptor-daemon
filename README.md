@@ -41,7 +41,7 @@ Download the latest binary for your platform from the
 or build from source (see below). Then:
 
 ```sh
-chmod +x receptor-daemon-linux-amd64   # or receptor-daemon-darwin-*
+chmod +x receptor-daemon-linux-amd64   # or -linux-arm64 / -darwin-amd64 / -darwin-arm64
 mv receptor-daemon-linux-amd64 /usr/local/bin/receptor-daemon
 ```
 
@@ -141,13 +141,16 @@ needs a real service manager, which isn't available in CI containers).
 platforms' code paths (including the platform-specific `internal/service`
 files, since each runner only compiles its own OS's build-tagged file).
 
-`.github/workflows/release.yml` builds `linux-amd64`, `darwin-amd64`, and
-`darwin-arm64` binaries and publishes them to a GitHub Release on a
-`v*.*.*` tag push (or manual dispatch). Unlike `receptor-desktop`, this
-module has no cgo dependencies at all, so all three are true
-cross-compiles from a single `ubuntu-latest` runner — no native macOS
-builder needed just to produce the binary (macOS is still needed
-separately, via `ci.yml`, to actually *run* the darwin-tagged tests).
+`.github/workflows/release.yml` builds `linux-amd64`, `linux-arm64`,
+`darwin-amd64`, and `darwin-arm64` binaries and publishes them to a
+GitHub Release on a `v*.*.*` tag push (or manual dispatch). Unlike
+`receptor-desktop`, this module has no cgo dependencies at all, so all
+four are true cross-compiles from a single `ubuntu-latest` runner — no
+native macOS/arm64 builder needed just to produce the binaries (macOS is
+still needed separately, via `ci.yml`, to actually *run* the
+darwin-tagged tests). The `linux-arm64` build in particular is what lets
+an Apple Silicon Mac run a native (non-emulated) Linux test VM via tools
+like Multipass, which default to arm64 guests on ARM hosts.
 
 ## Known limitations / not yet implemented
 

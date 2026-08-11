@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"golang.org/x/term"
@@ -24,8 +25,11 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
+		if err := cmdDefault(); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	cmd := os.Args[1]
@@ -65,7 +69,13 @@ func printUsage() {
 	fmt.Fprint(os.Stderr, `receptor-daemon — headless folder sync for Memory (Linux/macOS)
 
 Usage:
+  receptor-daemon                                run with no arguments for an
+                                                  interactive setup wizard on
+                                                  first use, or a status summary
+                                                  if already configured
   receptor-daemon init --server <url> [--api-key <key>]
+                                                  non-interactive setup, for
+                                                  scripts/automation
   receptor-daemon folders add <path> [--ignore pat,pat]
   receptor-daemon folders remove <path>
   receptor-daemon folders list
@@ -92,6 +102,164 @@ func addConfigFlag(fs *flag.FlagSet) *string {
 	return fs.String("config", def, "path to config.json")
 }
 
+// MARK: - default (bare invocation)
+
+// cmdDefault is what runs when receptor-daemon is invoked with no
+// arguments at all: a guided setup wizard on first use (mirroring tools
+// like `aws configure`/`gh auth login`), or a quick status summary if
+// already configured — never silently re-runs setup over a working
+// config. `init` and the rest of the subcommands remain available
+// unchanged for scripting/automation; --help lists all of them.
+func cmdDefault() error {
+	configPath, err := config.DefaultPath()
+	if err != nil {
+		return fmt.Errorf("could not resolve a default config path: %w", err)
+	}
+
+	cfg, err := config.Load(configPath)
+	if errors.Is(err, config.ErrNotInitialized) {
+		return runSetupWizard(configPath)
+	}
+	if err != nil {
+		return err
+	}
+
+	printStatusReport(daemon.Status(context.Background(), cfg, configPath))
+	fmt.Println("\nAlready configured. Run `receptor-daemon --help` for the full command list, or `receptor-daemon folders add <path>` to watch another folder.")
+	return nil
+}
+
+func runSetupWizard(configPath string) error {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Welcome to Receptor — let's get you set up.")
+	fmt.Println()
+
+	server := promptLine(reader, "Memory server URL", "https://memory.indexmemory.com")
+
+	key, err := promptAPIKey(reader)
+	if err != nil {
+		return err
+	}
+	for key == "" {
+		fmt.Println("An API key is required — mint one from Memory's web UI under Settings > API Keys.")
+		key, err = promptAPIKey(reader)
+		if err != nil {
+			return err
+		}
+	}
+
+	intervalStr := promptLine(reader, "Sync interval in minutes", strconv.Itoa(config.DefaultSyncIntervalMinutes))
+	interval, convErr := strconv.Atoi(intervalStr)
+	if convErr != nil || interval <= 0 {
+		fmt.Printf("Invalid interval %q, using the default of %d minutes.\n", intervalStr, config.DefaultSyncIntervalMinutes)
+		interval = config.DefaultSyncIntervalMinutes
+	}
+
+	cfg := config.Config{
+		ServerURL:           strings.TrimRight(server, "/"),
+		APIKey:              key,
+		SyncIntervalMinutes: interval,
+	}
+
+	fmt.Println()
+	for promptYesNo(reader, "Add a folder to watch now?", true) {
+		path := promptLine(reader, "Folder path", "")
+		if path == "" {
+			break
+		}
+		absPath, err := filepath.Abs(path)
+		if err != nil {
+			fmt.Println("invalid path:", err)
+			continue
+		}
+		info, err := os.Stat(absPath)
+		if err != nil || !info.IsDir() {
+			fmt.Printf("%s is not an accessible directory, skipping\n", absPath)
+			continue
+		}
+		ignoreStr := promptLine(reader, "Ignore patterns (comma-separated, optional)", "")
+		if cfg.AddFolder(absPath, splitPatterns(ignoreStr)) {
+			fmt.Printf("added %s\n", absPath)
+		} else {
+			fmt.Printf("%s is already added\n", absPath)
+		}
+		fmt.Println()
+	}
+
+	if err := config.Save(configPath, cfg); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	fmt.Printf("wrote config to %s\n", configPath)
+
+	client := core.NewMemoryClient(cfg.ServerURL, cfg.APIKey)
+	ok, connErr := client.TestConnection(context.Background())
+	switch {
+	case connErr != nil:
+		fmt.Fprintf(os.Stderr, "warning: could not verify connection: %v\n", connErr)
+	case !ok:
+		fmt.Fprintln(os.Stderr, "warning: server rejected the API key — double check it")
+	default:
+		fmt.Println("connection verified")
+	}
+
+	fmt.Println()
+	if promptYesNo(reader, "Install as a background service now?", true) {
+		system := promptYesNo(reader, "System-wide install (needs sudo)? Otherwise per-user, no sudo needed", false)
+
+		binaryPath, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		if resolved, err := filepath.EvalSymlinks(binaryPath); err == nil {
+			binaryPath = resolved
+		}
+		absConfigPath, err := filepath.Abs(configPath)
+		if err != nil {
+			return err
+		}
+
+		opts := service.Options{BinaryPath: binaryPath, ConfigPath: absConfigPath, System: system}
+		if err := service.Install(opts); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not install the service: %v\n", err)
+		} else {
+			fmt.Println("installed and started the receptor-daemon service")
+		}
+	}
+
+	fmt.Println("\nAll set! Run `receptor-daemon status` any time, or `receptor-daemon --help` for the full command list.")
+	return nil
+}
+
+// promptLine prints label (with def shown as the value used on empty
+// input, if any) and returns the trimmed line the user typed.
+func promptLine(reader *bufio.Reader, label, def string) string {
+	if def != "" {
+		fmt.Printf("%s [%s]: ", label, def)
+	} else {
+		fmt.Printf("%s: ", label)
+	}
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return def
+	}
+	return line
+}
+
+func promptYesNo(reader *bufio.Reader, label string, def bool) bool {
+	suffix := "[Y/n]"
+	if !def {
+		suffix = "[y/N]"
+	}
+	fmt.Printf("%s %s: ", label, suffix)
+	line, _ := reader.ReadString('\n')
+	line = strings.ToLower(strings.TrimSpace(line))
+	if line == "" {
+		return def
+	}
+	return line == "y" || line == "yes"
+}
+
 // MARK: - init
 
 func cmdInit(args []string) error {
@@ -110,7 +278,7 @@ func cmdInit(args []string) error {
 	key := *apiKey
 	if key == "" {
 		var err error
-		key, err = promptAPIKey()
+		key, err = promptAPIKey(bufio.NewReader(os.Stdin))
 		if err != nil {
 			return err
 		}
@@ -146,10 +314,14 @@ func cmdInit(args []string) error {
 }
 
 // promptAPIKey reads the key without echoing it to the terminal, so it
-// doesn't end up visible on-screen or in scrollback. Falls back to a
-// plain line read when stdin isn't a real TTY (e.g. piped input from a
-// setup script), so `echo "$KEY" | receptor-daemon init ...` still works.
-func promptAPIKey() (string, error) {
+// doesn't end up visible on-screen or in scrollback. Falls back to
+// reading a plain line from reader when stdin isn't a real TTY (e.g.
+// piped input from a setup script), so `echo "$KEY" | receptor-daemon
+// init ...` still works. Callers that also do other line-based prompts
+// (the setup wizard) must pass the same *bufio.Reader instance they use
+// for those — bufio buffers ahead, so two separate readers over the same
+// stdin can silently drop input.
+func promptAPIKey(reader *bufio.Reader) (string, error) {
 	fmt.Print("Memory API key: ")
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		data, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -159,7 +331,7 @@ func promptAPIKey() (string, error) {
 		}
 		return strings.TrimSpace(string(data)), nil
 	}
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	line, err := reader.ReadString('\n')
 	if err != nil && line == "" {
 		return "", err
 	}
@@ -315,7 +487,11 @@ func cmdStatus(args []string) error {
 		return err
 	}
 
-	report := daemon.Status(context.Background(), cfg, *configPath)
+	printStatusReport(daemon.Status(context.Background(), cfg, *configPath))
+	return nil
+}
+
+func printStatusReport(report daemon.StatusReport) {
 	if report.Connected {
 		fmt.Println("connected")
 	} else {
@@ -328,7 +504,6 @@ func cmdStatus(args []string) error {
 			fmt.Printf("  [%s] %s\n", e.Time.Format("2006-01-02 15:04:05"), e.Message)
 		}
 	}
-	return nil
 }
 
 func cmdRun(args []string) error {

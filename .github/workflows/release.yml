@@ -17,6 +17,9 @@ jobs:
           - goos: linux
             goarch: amd64
             artifact: receptor-daemon-linux-amd64
+          - goos: linux
+            goarch: arm64
+            artifact: receptor-daemon-linux-arm64
           - goos: darwin
             goarch: amd64
             artifact: receptor-daemon-darwin-amd64
@@ -57,6 +60,7 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --repo "${{ github.repository }}" \
             dist/receptor-daemon-linux-amd64 \
+            dist/receptor-daemon-linux-arm64 \
             dist/receptor-daemon-darwin-amd64 \
             dist/receptor-daemon-darwin-arm64 \
             --title "${{ github.ref_name }}" \
