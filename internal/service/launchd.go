@@ -93,10 +93,21 @@ func Install(opts Options) error {
 	if err := os.WriteFile(path, []byte(launchdPlistContent(opts)), 0o644); err != nil {
 		return err
 	}
+	target := domainTarget(opts.System) + "/" + launchdLabel
 	// Best-effort: harmless/expected to fail when nothing was loaded yet.
-	_ = runLaunchctl("bootout", domainTarget(opts.System)+"/"+launchdLabel)
+	_ = runLaunchctl("bootout", target)
 	if err := runLaunchctl("bootstrap", domainTarget(opts.System), path); err != nil {
 		return fmt.Errorf("launchctl bootstrap: %w", err)
+	}
+	// RunAtLoad is supposed to start the job immediately on bootstrap,
+	// but that trigger can silently race with the preceding bootout
+	// (which unloads asynchronously) and never fire — observed for real:
+	// `launchctl print` showing a bootstrapped job stuck at `runs = 0`,
+	// `state = not running`, indefinitely. `kickstart -k` force-starts it
+	// regardless, so Install() always leaves a genuinely running process
+	// behind rather than one that merely looks registered.
+	if err := runLaunchctl("kickstart", "-k", target); err != nil {
+		return fmt.Errorf("launchctl kickstart: %w", err)
 	}
 	return nil
 }

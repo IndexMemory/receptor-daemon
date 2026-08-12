@@ -178,6 +178,96 @@ darwin`) — each has its own test file that verifies unit/plist file
 *generation* without actually invoking `systemctl`/`launchctl` (that part
 needs a real service manager, which isn't available in CI containers).
 
+## Manual testing on real hardware
+
+`go test` covers the logic; it can't tell you whether `start` actually
+keeps a real launchd/systemd job alive, or whether it survives a reboot.
+That needs a real Mac and a real Linux box (or VM). Steps for both:
+
+### macOS
+
+1. Download `receptor-daemon-darwin-arm64` (or `-amd64` on Intel) from the
+   [Releases page](https://github.com/IndexMemory/receptor-daemon/releases).
+2. If Gatekeeper blocks it (it may not, since it's a bare CLI binary, not
+   an app bundle): `xattr -d com.apple.quarantine receptor-daemon-darwin-arm64`.
+3. Install it:
+   ```sh
+   chmod +x receptor-daemon-darwin-arm64
+   sudo mv receptor-daemon-darwin-arm64 /usr/local/bin/receptor-daemon
+   ```
+4. `receptor-daemon --version` — confirm it's the build you think it is.
+5. Run the wizard (bare `receptor-daemon`): server URL → API key → sync
+   interval → at least one folder → say yes to starting it as a
+   background service (per-user, no sudo).
+6. Confirm it's really running (not just registered):
+   `launchctl list | grep receptor-daemon` — the first column should be a
+   real PID, not `-`. `launchctl print
+   gui/$(id -u)/com.indexmemory.receptor-daemon` gives more detail
+   (`state = running`, `runs` > 0) if you need to dig further.
+7. Drop a file into the watched folder, wait for the interval (or run
+   `receptor-daemon sync` manually), then `receptor-daemon status` to
+   confirm it uploaded.
+8. `receptor-daemon stop` when done.
+
+Full clean removal (binary + all config/state):
+```sh
+receptor-daemon stop
+sudo rm /usr/local/bin/receptor-daemon
+rm -rf ~/Library/Application\ Support/receptor-daemon
+# only if you'd also tested --system:
+sudo launchctl bootout system/com.indexmemory.receptor-daemon 2>/dev/null
+sudo rm -f /Library/LaunchDaemons/com.indexmemory.receptor-daemon.plist
+```
+
+### Linux, via a Multipass VM (useful on a Mac with no spare Linux box)
+
+1. `brew install --cask multipass`, then `multipass launch --name
+   receptor-test` — defaults to an arm64 guest on Apple Silicon, matching
+   the `linux-arm64` release binary.
+2. Get the binary into the VM. Since this repo is private, a plain `curl`
+   of the release asset URL from inside the VM will 404 — instead
+   download it on your Mac first (`gh release download <tag> --repo
+   IndexMemory/receptor-daemon --pattern receptor-daemon-linux-arm64`),
+   then copy it in:
+   ```sh
+   multipass transfer /path/to/receptor-daemon-linux-arm64 receptor-test:/home/ubuntu/receptor-daemon
+   ```
+3. `multipass shell receptor-test`, then:
+   ```sh
+   chmod +x receptor-daemon
+   sudo mv receptor-daemon /usr/local/bin/receptor-daemon
+   receptor-daemon --version
+   ```
+4. Run the wizard (bare `receptor-daemon`), same flow as macOS.
+5. `systemctl --user status receptor-daemon` — look for `active (running)`.
+6. Drop a file in the watched folder, `receptor-daemon sync` or wait for
+   the interval, confirm via `receptor-daemon status`.
+7. Boot-survival test (the `loginctl enable-linger` behavior): from your
+   Mac (not inside the VM), `multipass stop receptor-test` then
+   `multipass start receptor-test` — prefer this two-step version over
+   `multipass restart`, which has been observed to hang indefinitely
+   (Multipass/QEMU issue, unrelated to `receptor-daemon`) with no
+   further guest activity in `multipassd.log` after the reboot signal.
+   Then, **without shelling in first** (logging in would defeat the
+   point of the test), check from the host:
+   ```sh
+   multipass exec receptor-test -- systemctl --user status receptor-daemon
+   ```
+   `active (running)` here confirms the service survived the restart
+   without an interactive login — lingering is working.
+8. `receptor-daemon stop` when done.
+
+If a Multipass VM ever gets stuck (state stays `Restarting`/`Stopped`
+with no progress in `multipassd.log` at
+`/Library/Logs/Multipass/multipassd.log`), recreate it rather than debug
+the VM itself:
+```sh
+multipass stop receptor-test --force
+multipass delete receptor-test
+multipass purge
+multipass launch --name receptor-test
+```
+
 ## CI
 
 `.github/workflows/ci.yml` runs `go build`/`vet`/`test` natively on both
@@ -208,9 +298,15 @@ like Multipass, which default to arm64 guests on ARM hosts.
   yet. Ships as a plain binary via GitHub Releases, same tradeoff already
   made for the other two Receptor apps.
 - **`start`/`stop` confirmed working against a real launchd on macOS**
-  (per-user). **Still unverified against a real systemd** — so far only
-  confirmed that the unit file content/paths are correct and that it
-  fails cleanly when `systemctl` isn't available (e.g. inside a plain
-  Docker container, which has no init system running). Needs a real
-  Linux box (or a VM with real systemd, e.g. via Multipass) to confirm
+  (per-user), including a real bug found and fixed there: `bootstrap`
+  right after `bootout` (added to make re-running `start` idempotent)
+  could race and leave `RunAtLoad` never firing — a job that looked
+  "loaded" via `launchctl print` but had `runs = 0` and was never
+  actually spawned. Fixed by force-starting with `launchctl kickstart -k`
+  after bootstrap instead of relying on `RunAtLoad`'s own timing.
+  **Still unverified against a real systemd** — so far only confirmed
+  that the unit file content/paths are correct and that it fails cleanly
+  when `systemctl` isn't available (e.g. inside a plain Docker container,
+  which has no init system running). Needs a real Linux box (or a VM
+  with real systemd, e.g. via Multipass) to confirm
   end-to-end, including the `loginctl enable-linger` boot-start behavior.
