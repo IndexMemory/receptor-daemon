@@ -53,9 +53,17 @@ func foldersEqual(a, b []config.FolderConfig) bool {
 }
 
 // applyRemoteConfig persists a config pushed from Memory into cfg (both
-// in-memory and on disk) and reconciles boot-start if it differs from
-// what's actually installed. Reports what changed so the caller knows
+// in-memory and on disk). Reports what changed so the caller knows
 // whether to rebuild its SyncEngines / reschedule its sync ticker.
+//
+// Boot-start is deliberately NOT applied here — whether this daemon runs
+// at all is a local decision (`receptor-daemon start`/`stop`), never a
+// remote one. A remote "disable" used to uninstall the service from
+// inside its own check-in loop, which stops the very process that would
+// need to be running to notice a later "enable" — a one-way trap with no
+// remote recovery. remoteConfigFromLocal still *reports*
+// BootStartEnabled every check-in so Memory's UI can show it as
+// read-only status.
 func applyRemoteConfig(remote core.RemoteConfig, cfg *config.Config, configPath string) (foldersChanged, intervalChanged bool, err error) {
 	intervalChanged = cfg.SyncIntervalMinutes != remote.SyncIntervalMinutes
 	cfg.SyncIntervalMinutes = remote.SyncIntervalMinutes
@@ -71,61 +79,44 @@ func applyRemoteConfig(remote core.RemoteConfig, cfg *config.Config, configPath 
 		return foldersChanged, intervalChanged, fmt.Errorf("saving remotely-pushed config: %w", saveErr)
 	}
 
-	reconcileBootStart(remote.BootStartEnabled, configPath)
 	return foldersChanged, intervalChanged, nil
 }
 
-// reconcileBootStart compares the remotely-desired boot-start state
-// against what's actually installed and calls Install/Uninstall only if
-// they differ. A remote request to *enable* boot-start always installs
-// per-user (there's no way to request a --system install remotely — that
-// needs root, which this process may not have, and per-user is the
-// sensible default anyway; a local `sudo receptor-daemon start --system`
-// remains how you'd get that). A remote request to *disable* it
-// uninstalls whatever scope is actually running, system or per-user.
-func reconcileBootStart(wantEnabled bool, configPath string) {
-	installed, system, err := service.Status()
-	if err != nil {
-		log.Printf("check-in: could not determine current service status: %v", err)
-		return
+// applyAPIKeyRotation persists a newly-issued API key (see "Rotating an
+// API key" in the README) and swaps it into the live client so every
+// subsequent request — including this daemon's next check-in — uses it.
+// server_url is untouched; rotation only ever replaces the key, never the
+// server it authenticates against.
+func applyAPIKeyRotation(newKey string, client *core.MemoryClient, cfg *config.Config, configPath string) error {
+	cfg.APIKey = newKey
+	if err := config.Save(configPath, *cfg); err != nil {
+		return fmt.Errorf("saving rotated API key: %w", err)
 	}
-	switch {
-	case wantEnabled && !installed:
-		opts, err := service.ResolveOptions(configPath, false)
-		if err != nil {
-			log.Printf("check-in: could not resolve service options: %v", err)
-			return
-		}
-		if err := service.Install(opts); err != nil {
-			log.Printf("check-in: remote config requested boot-start, but starting the service failed: %v", err)
-			return
-		}
-		log.Println("check-in: started the background service (remotely enabled)")
-	case !wantEnabled && installed:
-		opts, err := service.ResolveOptions(configPath, system)
-		if err != nil {
-			log.Printf("check-in: could not resolve service options: %v", err)
-			return
-		}
-		if err := service.Uninstall(opts); err != nil {
-			log.Printf("check-in: remote config requested disabling boot-start, but stopping the service failed: %v", err)
-			return
-		}
-		log.Println("check-in: stopped the background service (remotely disabled)")
-	}
+	client.APIKey = newKey
+	return nil
 }
 
 // checkIn reports the daemon's current config to Memory and applies any
-// pending remote change. Best-effort: network/parse errors are logged and
-// skipped, the same tolerance the sync loop already has for a single bad
-// cycle — never fatal to the daemon, there's always another check-in a
-// minute later.
+// pending remote change — a config edit, a key rotation, or both in the
+// same response, independently of one another. Best-effort: network/parse
+// errors are logged and skipped, the same tolerance the sync loop already
+// has for a single bad cycle — never fatal to the daemon, there's always
+// another check-in a minute later.
 func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config, configPath string) (foldersChanged, intervalChanged bool) {
 	result, err := client.CheckIn(ctx, remoteConfigFromLocal(*cfg))
 	if err != nil {
 		log.Printf("check-in failed: %v", err)
 		return false, false
 	}
+
+	if result.RotateAPIKey != nil && *result.RotateAPIKey != "" {
+		if err := applyAPIKeyRotation(*result.RotateAPIKey, client, cfg, configPath); err != nil {
+			log.Printf("check-in: applying rotated API key failed: %v", err)
+		} else {
+			log.Println("check-in: switched to a newly rotated API key")
+		}
+	}
+
 	if !result.NeedsUpdate || result.Config == nil {
 		return false, false
 	}

@@ -148,6 +148,39 @@ func TestCheckInAppliesUpdateWhenServerRequestsOne(t *testing.T) {
 	}
 }
 
+func TestCheckInAppliesRotatedAPIKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configPath := filepath.Join(t.TempDir(), "config.json")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"needs_update":false,"config":null,"version":1,"rotate_api_key":"mem_rotated"}`))
+	}))
+	defer srv.Close()
+
+	client := core.NewMemoryClient(srv.URL, "mem_old")
+	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_old", SyncIntervalMinutes: 15}
+
+	checkIn(context.Background(), client, &cfg, configPath)
+
+	if cfg.APIKey != "mem_rotated" {
+		t.Fatalf("expected cfg.APIKey rotated, got %q", cfg.APIKey)
+	}
+	if client.APIKey != "mem_rotated" {
+		t.Fatalf("expected client.APIKey swapped so future requests use it, got %q", client.APIKey)
+	}
+	persisted, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.APIKey != "mem_rotated" {
+		t.Fatalf("expected the rotated key persisted to disk, got %q", persisted.APIKey)
+	}
+	if persisted.ServerURL != srv.URL {
+		t.Fatalf("expected server_url untouched by a key rotation, got %q", persisted.ServerURL)
+	}
+}
+
 func TestCheckInIsNoOpWhenServerReportsNoUpdate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	configPath := filepath.Join(t.TempDir(), "config.json")

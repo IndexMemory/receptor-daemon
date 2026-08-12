@@ -159,22 +159,44 @@ side, this is how Memory's Integrations page shows what's really
 happening, not just what was last requested); if an admin has edited the
 key's config there since the last check-in, the response carries the new
 config and the daemon applies it immediately: persists it to `config.json`
-(never touching `server_url`/`api_key` — those authenticate the channel
-this travels over, and aren't remotely settable), rebuilds its
-`SyncEngine`s if the folder list changed, reschedules its sync ticker if
-the interval changed, and reconciles boot-start via the same
-`service.Install`/`Uninstall` that `start`/`stop` use if that toggle
-changed.
+(never touching `server_url` — see below for `api_key`), rebuilds its
+`SyncEngine`s if the folder list changed, and reschedules its sync ticker
+if the interval changed.
 
 This only runs inside the `run` loop (i.e. once `start` has set the
 service up) — a one-off `sync` or manually running `receptor-daemon run`
 in a terminal doesn't check in.
 
-Remotely enabling boot-start always installs **per-user** (there's no way
-to request a `--system` install remotely — that needs root, which the
-daemon process may not have); remotely disabling it uninstalls whatever
-scope is actually running. If you need `--system`, set that up locally
-via `sudo receptor-daemon start --system`.
+Whether the daemon runs at all — boot-start — is **local-only**, set via
+`receptor-daemon start`/`stop` on the machine itself, and is not
+remotely settable from Memory's UI (which shows it as read-only status).
+An earlier version of this feature let boot-start be toggled remotely,
+but a remote "disable" uninstalled the very service that would need to
+be running to notice a later "enable" — a one-way trap with no remote
+recovery. Revoking the API key remains the right remote lever if you
+need to stop trusting a given machine.
+
+### Rotating an API key
+
+Clicking "Rotate API key" on a receptor key in Memory's Integrations page
+mints a brand-new key and tells the daemon (via the *old* key's next
+check-in response) to switch to it. The daemon persists the new key to
+`config.json` and starts using it immediately, including for its own
+next check-in — so from that point on, it's checking in as the new key,
+never the old one again.
+
+The old key deliberately **stays valid** through this — it's what lets
+the instruction keep being redelivered if the daemon is offline or the
+first attempt fails. Memory auto-revokes the old key only once the *new*
+key's first check-in actually arrives — real proof the daemon switched,
+not just that the instruction was sent. There's no "Pending" flag to
+babysit here and nothing to delete by hand.
+
+`server_url` is never part of a rotation (or remotely settable at all —
+see above); rotation only ever replaces the key, never the server it
+authenticates against. If a daemon genuinely needs to point at a
+different Memory deployment, that's a fresh `receptor-daemon init` on
+the machine.
 
 ## Building from source
 
@@ -318,17 +340,15 @@ like Multipass, which default to arm64 guests on ARM hosts.
   that part of the original gap is unchanged.
 - **No deletion sync.** Deleting a file locally does not delete it from
   Memory.
-- **Remote configuration (sync interval, folders, boot-start) is
-  implemented but not yet verified end-to-end** — both sides (Memory's
-  check-in endpoint + Integrations UI, and this daemon's check-in loop)
-  are unit-tested and typecheck/build clean, but nobody has actually
-  edited a real daemon's config in a real Memory instance and watched it
-  land on a real machine yet. Remote API key rotation and remote
-  binary/version updates remain explicitly out of scope (see the plan
-  this was built from) — rotation needs a grace-period design (revoking
-  the old key immediately would break the very check-in that delivers the
-  new one), and self-update needs checksum/signature verification before
-  executing a downloaded binary.
+- **Remote configuration covers sync interval, folders, and API key
+  rotation** — verified end-to-end against a real Memory instance and
+  real daemons (macOS + Linux). Boot-start is deliberately *not*
+  remotely settable (see "Remote configuration from Memory" above): it's
+  a local decision via `receptor-daemon start`/`stop`, reported to
+  Memory as read-only status. `server_url` is likewise never remotely
+  settable, rotation included (see "Rotating an API key" above). Remote
+  binary/version updates remain explicitly out of scope — that needs
+  checksum/signature verification before executing a downloaded binary.
 - **No package manager distribution** — no `.deb`, no Homebrew formula
   yet. Ships as a plain binary via GitHub Releases, same tradeoff already
   made for the other two Receptor apps.

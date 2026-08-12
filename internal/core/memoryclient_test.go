@@ -230,3 +230,37 @@ func TestCheckInParsesNeedsUpdateResponseWithConfig(t *testing.T) {
 		t.Fatalf("expected version 4, got %d", result.Version)
 	}
 }
+
+func TestCheckInParsesRotateAPIKeyResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"needs_update":false,"config":null,"version":1,"rotate_api_key":"mem_newkey"}`))
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RotateAPIKey == nil || *result.RotateAPIKey != "mem_newkey" {
+		t.Fatalf("expected RotateAPIKey %q, got %v", "mem_newkey", result.RotateAPIKey)
+	}
+}
+
+func TestCheckInLeavesRotateAPIKeyNilWhenAbsent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"needs_update":false,"config":null,"version":1}`))
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RotateAPIKey != nil {
+		t.Fatalf("expected RotateAPIKey nil, got %v", *result.RotateAPIKey)
+	}
+}

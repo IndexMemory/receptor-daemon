@@ -167,9 +167,9 @@ type RemoteFolder struct {
 
 // RemoteConfig mirrors Memory's ReceptorDaemonConfig — the subset of
 // config a receptor-kind API key can remotely control from Memory's web
-// UI. ServerURL/APIKey are deliberately excluded: they authenticate the
-// very channel this travels over, so remotely changing them is a separate,
-// harder problem (rotation needs a grace period) left for later.
+// UI. ServerURL is deliberately excluded (never remotely settable — see
+// README); APIKey rotation is a separate mechanism (see CheckInResult.
+// RotateAPIKey below), not part of this struct.
 type RemoteConfig struct {
 	SyncIntervalMinutes int            `json:"sync_interval_minutes"`
 	Folders             []RemoteFolder `json:"folders"`
@@ -182,6 +182,11 @@ type CheckInResult struct {
 	// Config is only non-nil when NeedsUpdate is true.
 	Config  *RemoteConfig
 	Version int
+	// RotateAPIKey is non-nil when Memory has a key rotation in flight
+	// for this key: the daemon should start using this plaintext key for
+	// all future requests, including its next check-in. See
+	// internal/daemon/checkin.go's applyAPIKeyRotation.
+	RotateAPIKey *string
 }
 
 // CheckIn reports the daemon's currently-running config to Memory and
@@ -214,15 +219,21 @@ func (c *MemoryClient) CheckIn(ctx context.Context, current RemoteConfig) (Check
 	}
 
 	var decoded struct {
-		OK          bool          `json:"ok"`
-		NeedsUpdate bool          `json:"needs_update"`
-		Config      *RemoteConfig `json:"config"`
-		Version     int           `json:"version"`
+		OK           bool          `json:"ok"`
+		NeedsUpdate  bool          `json:"needs_update"`
+		Config       *RemoteConfig `json:"config"`
+		Version      int           `json:"version"`
+		RotateAPIKey *string       `json:"rotate_api_key"`
 	}
 	if err := json.Unmarshal(respBody, &decoded); err != nil {
 		return CheckInResult{}, fmt.Errorf("failed to decode server response: %w", err)
 	}
-	return CheckInResult{NeedsUpdate: decoded.NeedsUpdate, Config: decoded.Config, Version: decoded.Version}, nil
+	return CheckInResult{
+		NeedsUpdate:  decoded.NeedsUpdate,
+		Config:       decoded.Config,
+		Version:      decoded.Version,
+		RotateAPIKey: decoded.RotateAPIKey,
+	}, nil
 }
 
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
