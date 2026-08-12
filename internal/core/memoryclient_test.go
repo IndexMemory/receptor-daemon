@@ -81,12 +81,18 @@ func TestUploadSendsMultipartBodyWithBearerAuth(t *testing.T) {
 }
 
 func TestUploadDetectsContentTypeForExtensionsWithNoBuiltInMimeMapping(t *testing.T) {
-	// .log isn't a registered MIME extension, unlike .txt — this exercises
-	// the content-sniffing fallback rather than the mime.TypeByExtension
-	// fast path, and is exactly what a real user hit: a .log file getting
-	// uploaded as application/octet-stream and coming back "Unreadable"
-	// in Memory even though it was plain text.
-	tmp := filepath.Join(t.TempDir(), "app.log")
+	// A real user hit this with a .log file: mime.TypeByExtension(".log")
+	// reads the OS's own mime.types database, which is environment-
+	// dependent — e.g. ubuntu-latest's CI runner has .log registered as
+	// text/x-log, while other systems (including the golang:1.23 Docker
+	// image used for local dev) don't recognize it at all. Either way is
+	// fine (both are real, non-octet-stream text types) but makes .log
+	// itself a flaky choice for a deterministic test. Using a made-up
+	// extension no OS would ever register guarantees this always
+	// exercises the content-sniffing fallback specifically, whose
+	// behavior (http.DetectContentType) is pure Go stdlib, not
+	// OS-dependent.
+	tmp := filepath.Join(t.TempDir(), "app.receptortestlog")
 	if err := os.WriteFile(tmp, []byte("2026-08-12 12:00:00 started up\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -100,16 +106,13 @@ func TestUploadDetectsContentTypeForExtensionsWithNoBuiltInMimeMapping(t *testin
 			}
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true,"results":[{"status":"queued","id":"doc_1","filename":"app.log"}]}`))
+		_, _ = w.Write([]byte(`{"ok":true,"results":[{"status":"queued","id":"doc_1","filename":"app.receptortestlog"}]}`))
 	}))
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	if _, err := client.Upload(context.Background(), tmp, "app.log"); err != nil {
+	if _, err := client.Upload(context.Background(), tmp, "app.receptortestlog"); err != nil {
 		t.Fatal(err)
-	}
-	if strings.HasPrefix(gotContentType, "application/octet-stream") {
-		t.Fatalf("expected a text content type for a plain-text .log file, got %q", gotContentType)
 	}
 	if !strings.HasPrefix(gotContentType, "text/plain") {
 		t.Fatalf("expected text/plain (via content sniffing), got %q", gotContentType)
