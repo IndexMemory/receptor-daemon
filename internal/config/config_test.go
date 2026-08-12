@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -112,5 +113,63 @@ func TestUpdateIgnorePatterns(t *testing.T) {
 	}
 	if cfg.UpdateIgnorePatterns("/does/not/exist", []string{"*.tmp"}) {
 		t.Fatal("expected update of unknown path to report false")
+	}
+}
+
+func TestConfigDirForHomeDiffersByOS(t *testing.T) {
+	dir := configDirForHome("/home/alice")
+	if runtime.GOOS == "darwin" {
+		if dir != filepath.Join("/home/alice", "Library", "Application Support") {
+			t.Fatalf("unexpected macOS config dir: %s", dir)
+		}
+	} else if dir != filepath.Join("/home/alice", ".config") {
+		t.Fatalf("unexpected config dir: %s", dir)
+	}
+}
+
+func TestUserConfigDirForEUIDIgnoresSudoUserWhenNotRoot(t *testing.T) {
+	self, err := user.Current()
+	if err != nil {
+		t.Skip("no current user available in this environment")
+	}
+	t.Setenv("SUDO_USER", self.Username)
+	t.Setenv("HOME", "/should-be-used-since-euid-is-not-0")
+
+	dir, err := userConfigDirForEUID(501) // any non-zero euid
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir == configDirForHome(self.HomeDir) {
+		t.Fatal("expected SUDO_USER to be ignored when not running as root (euid 0)")
+	}
+}
+
+func TestUserConfigDirForEUIDResolvesSudoUserWhenRoot(t *testing.T) {
+	// Uses the real current user as a stand-in "sudo invoker" — user.Lookup
+	// needs a real account to succeed against, and this one definitely
+	// exists on whatever machine runs the test.
+	self, err := user.Current()
+	if err != nil {
+		t.Skip("no current user available in this environment")
+	}
+	t.Setenv("SUDO_USER", self.Username)
+
+	dir, err := userConfigDirForEUID(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := configDirForHome(self.HomeDir); dir != want {
+		t.Fatalf("expected %s (self's home via SUDO_USER), got %s", want, dir)
+	}
+}
+
+func TestUserConfigDirForEUIDFallsBackWhenRootWithoutSudoUser(t *testing.T) {
+	t.Setenv("SUDO_USER", "")
+	// Just needs to not panic/error and to not attempt a SUDO_USER lookup;
+	// falls through to os.UserConfigDir(), which needs $HOME set to
+	// succeed at all on Unix.
+	t.Setenv("HOME", t.TempDir())
+	if _, err := userConfigDirForEUID(0); err != nil {
+		t.Fatal(err)
 	}
 }

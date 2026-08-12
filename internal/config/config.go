@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 )
 
 // DefaultSyncIntervalMinutes matches the default used by receptor-ios and
@@ -47,12 +49,55 @@ var ErrNotInitialized = errors.New("receptor-daemon is not initialized yet — r
 // ~/Library/Application Support on macOS) plus a "receptor-daemon"
 // subdirectory. Overridable per-invocation via the --config flag handled
 // in cmd/receptor-daemon.
+//
+// Running as root via sudo (e.g. `sudo receptor-daemon update`, needed
+// whenever the binary lives somewhere root-owned like /usr/local/bin —
+// the documented install location, so this is the common case, not an
+// edge case) resolves for the user who invoked sudo instead of root
+// itself. Without this, most Linux distributions reset $HOME under
+// sudo, so the default path would silently point at root's own —
+// almost certainly nonexistent — config instead of the real one, and
+// the command would fail with "not initialized" even though it plainly
+// is. (macOS's default sudo doesn't reset $HOME, so this mattered less
+// there, but resolving explicitly is correct — and harmless — on both.)
 func DefaultPath() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := userConfigDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "receptor-daemon", "config.json"), nil
+}
+
+func userConfigDir() (string, error) {
+	return userConfigDirForEUID(os.Geteuid())
+}
+
+// userConfigDirForEUID is the pure logic behind userConfigDir, split out
+// so it's testable without actually running as root — same pattern as
+// guardAgainstRootPerUserInstallEUID in internal/service/options.go.
+func userConfigDirForEUID(euid int) (string, error) {
+	if euid == 0 {
+		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+			if u, err := user.Lookup(sudoUser); err == nil && u.HomeDir != "" {
+				return configDirForHome(u.HomeDir), nil
+			}
+		}
+	}
+	return os.UserConfigDir()
+}
+
+// configDirForHome mirrors os.UserConfigDir()'s own per-OS logic, but
+// for an explicit home directory rather than reading $HOME — needed
+// because the sudo-invoking user's $HOME isn't necessarily what's
+// currently set (see DefaultPath's doc comment). Deliberately ignores
+// $XDG_CONFIG_HOME in this fallback path: under sudo, that env var (if
+// set at all) reflects root's environment, not the original user's, so
+// honoring it would be actively wrong more often than it'd help.
+func configDirForHome(home string) string {
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support")
+	}
+	return filepath.Join(home, ".config")
 }
 
 func Load(path string) (Config, error) {

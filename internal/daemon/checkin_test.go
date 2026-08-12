@@ -139,7 +139,7 @@ func TestCheckInAppliesUpdateWhenServerRequestsOne(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_test")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
 
-	foldersChanged, intervalChanged := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
+	foldersChanged, intervalChanged, _ := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
 	if !foldersChanged || !intervalChanged {
 		t.Fatalf("expected both changed, got foldersChanged=%v intervalChanged=%v", foldersChanged, intervalChanged)
 	}
@@ -194,12 +194,15 @@ func TestCheckInIsNoOpWhenServerReportsNoUpdate(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_test")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
 
-	foldersChanged, intervalChanged := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
+	foldersChanged, intervalChanged, ok := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
 	if foldersChanged || intervalChanged {
 		t.Fatalf("expected no changes, got foldersChanged=%v intervalChanged=%v", foldersChanged, intervalChanged)
 	}
 	if cfg.SyncIntervalMinutes != 15 {
 		t.Fatalf("expected cfg untouched, got interval %d", cfg.SyncIntervalMinutes)
+	}
+	if !ok {
+		t.Fatal("expected ok=true — the check-in call itself succeeded, even though nothing needed applying")
 	}
 }
 
@@ -214,8 +217,11 @@ func TestCheckInToleratesNetworkFailure(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_test")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
 
-	foldersChanged, intervalChanged := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
+	foldersChanged, intervalChanged, ok := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
 	if foldersChanged || intervalChanged {
 		t.Fatal("expected a network failure to be tolerated (logged, not applied), not treated as a change")
+	}
+	if ok {
+		t.Fatal("expected ok=false — the check-in call itself failed")
 	}
 }

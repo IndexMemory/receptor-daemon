@@ -103,11 +103,17 @@ func applyAPIKeyRotation(newKey string, client *core.MemoryClient, cfg *config.C
 // same tolerance the sync loop already has for a single bad cycle —
 // never fatal to the daemon, there's always another check-in a minute
 // later.
-func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config, configPath string, version string) (foldersChanged, intervalChanged bool) {
+//
+// ok reports whether the check-in itself succeeded (regardless of
+// whether anything needed applying) — Run() uses this as the "this
+// binary can actually talk to Memory" signal that clears a pending
+// update's rollback state (see rollback.go): a real, already-exercised
+// end-to-end smoke test, not just "the process is still alive."
+func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config, configPath string, version string) (foldersChanged, intervalChanged, ok bool) {
 	result, err := client.CheckIn(ctx, remoteConfigFromLocal(*cfg), version)
 	if err != nil {
 		log.Printf("check-in failed: %v", err)
-		return false, false
+		return false, false, false
 	}
 
 	if result.RotateAPIKey != nil && *result.RotateAPIKey != "" {
@@ -136,7 +142,7 @@ func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config,
 		applyRemoteUpdate(ctx, client, configPath)
 	}
 
-	return foldersChanged, intervalChanged
+	return foldersChanged, intervalChanged, true
 }
 
 // applyRemoteUpdate handles an admin-triggered remote update request —

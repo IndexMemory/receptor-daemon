@@ -203,17 +203,24 @@ Downloads the latest release and installs it. It:
    daemon independently re-verifies the SHA256 it receives too, as a
    second check against transport corruption between Memory and here —
    a mismatch at either stage aborts before anything is installed.
-3. Writes the verified binary next to the current one and atomically
-   renames it into place (same filesystem, so this can't leave a
-   half-written executable behind even if interrupted).
+3. Backs up the current binary (`<path>.previous`) and writes the
+   verified new one next to it, then atomically renames it into place
+   (same filesystem, so this can't leave a half-written executable
+   behind even if interrupted). See "Automatic rollback" below for what
+   that backup is for.
 4. Restarts the background service if one is installed
    (`receptor-daemon start` set one up), so the new version takes effect
    immediately; otherwise just tells you to restart `receptor-daemon
    run` yourself.
 
-If the binary is installed somewhere you don't own (e.g. a `--system`
-install), you'll need `sudo receptor-daemon update` — same as any other
-operation that touches a system-wide install.
+If the binary is installed somewhere you don't own — which, per the
+[Installing](#installing) instructions above, is the common case:
+`/usr/local/bin` needs root to write to, regardless of whether the
+background service itself is a per-user or `--system` install — you'll
+need `sudo receptor-daemon update`. Running as root still correctly
+finds *your* config (not root's), so no extra flags are needed: it
+resolves the config path for the user who ran `sudo`, not for root
+itself.
 
 #### Triggered remotely from Memory
 
@@ -224,7 +231,11 @@ response — same as remote config changes and API key rotation. The
 daemon then runs the exact same download-verify-swap-restart steps
 above (`internal/daemon.ApplyDaemonUpdate`, shared code with the CLI
 command), just triggered by a check-in response instead of someone
-typing the command.
+typing the command. "Update Selected" lets an admin pick several
+out-of-date daemons and trigger all of them at once — still the same
+per-key mechanism underneath, just looped; there's no separate bulk
+endpoint, and no automatic/scheduled rollout that picks devices for
+you.
 
 Confirmation works by detecting that the daemon's reported version
 *changed* since the request, not by matching a specific target exactly
@@ -233,13 +244,31 @@ daemon installs whatever is actually latest at that moment (same as
 running `receptor-daemon update` locally would), and the request still
 confirms cleanly instead of getting stuck.
 
-This is deliberately the simplest possible version of a remote trigger:
-one machine at a time (there's no bulk "update the whole team" button),
-no staged/percentage rollout, and no automatic rollback if a release
-turns out to be bad — a failed update is logged and retried on the next
-check-in, but a *bad* one that installs and runs poorly isn't detected
-or reverted. Fleet-wide staged rollout with automatic rollback is a
-deliberately separate, later phase.
+#### Automatic rollback
+
+Every update — local or remote — backs up the binary it's replacing
+(`<path>.previous`) and records a pending-update marker
+(`state/update_state.json`) before restarting into the new one. On
+startup, before doing anything else (so a new binary that panics early
+in its own init still gets caught), the daemon checks for that marker:
+
+- If this run completes a **successful check-in** — real proof the new
+  binary can actually talk to Memory, not just that the process is
+  still alive — the marker is cleared and the update is considered
+  confirmed.
+- If the process **crashes and gets restarted** by the service manager
+  (systemd `Restart=on-failure`, launchd `KeepAlive`) more than a
+  couple of times without ever reaching a successful check-in, the
+  daemon restores the backed-up binary and clears the marker on its
+  next startup attempt — the service manager's own crash-restart then
+  brings the old, working version back up. This resolves in well under
+  a minute of real downtime, not hours.
+
+This only catches a version that *crashes on startup* — it has no way
+to detect "installed fine but behaves subtly wrong," and there's still
+no staged/percentage rollout that picks a subset of a fleet
+automatically; "Update Selected" (an admin explicitly choosing which
+daemons) is as close as this gets today.
 
 ### Rotating an API key
 
@@ -412,15 +441,14 @@ like Multipass, which default to arm64 guests on ARM hosts.
   a local decision via `receptor-daemon start`/`stop`, reported to
   Memory as read-only status. `server_url` is likewise never remotely
   settable, rotation included (see "Rotating an API key" above).
-- **Remote updates are one-machine-at-a-time, with no rollback.** An
-  admin can trigger a checksum-verified update per receptor key from
-  Memory's Integrations page (see "Triggered remotely from Memory"
-  above), but there's no bulk/fleet-wide trigger, no staged or
-  percentage rollout, and no automatic revert if an installed release
-  turns out to run poorly — only a failed *download or install* is
-  retried automatically, not a bad-but-successfully-installed one.
-  Staged rollout + rollback is a deliberately separate, larger phase
-  not built yet.
+- **Remote updates have no automatic/percentage staging.** An admin can
+  trigger a checksum-verified update per receptor key (or select several
+  and "Update Selected") from Memory's Integrations page — see
+  "Triggered remotely from Memory" above — and a version that crashes on
+  startup auto-rolls-back (see "Automatic rollback" above). What's still
+  missing: nothing picks a subset of a fleet for you (an admin always
+  chooses explicitly), and rollback only catches a crash-on-startup, not
+  a release that installs fine but misbehaves in some subtler way.
 - **No package manager distribution** — no `.deb`, no Homebrew formula
   yet. Ships as a plain binary via GitHub Releases, same tradeoff already
   made for the other two Receptor apps.
@@ -437,3 +465,17 @@ like Multipass, which default to arm64 guests on ARM hosts.
   which has no init system running). Needs a real Linux box (or a VM
   with real systemd, e.g. via Multipass) to confirm
   end-to-end, including the `loginctl enable-linger` boot-start behavior.
+
+## License
+
+Copyright (c) 2026 IndexMemory, Inc. All rights reserved. This source is
+published for transparency, not as an open-source or reusable license —
+see [LICENSE](LICENSE) for exactly what's and isn't permitted. In short:
+you may read the code, and if you're a Memory user you may run the
+official released binaries from this repo's Releases page; anything
+else (copying, modifying, redistributing, or using the source
+independently of Memory) needs IndexMemory's prior written permission.
+
+This also means external pull requests and issues aren't something we
+have a process for accepting right now — feel free to open one if
+you've spotted a real bug, but please don't expect it to be merged.

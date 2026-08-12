@@ -18,6 +18,7 @@ import (
 
 	"github.com/IndexMemory/receptor-daemon/internal/config"
 	"github.com/IndexMemory/receptor-daemon/internal/core"
+	"github.com/IndexMemory/receptor-daemon/internal/service"
 )
 
 // StateDir is where per-folder manifests, retry queues, and the activity
@@ -98,9 +99,21 @@ func SyncOnce(ctx context.Context, cfg config.Config, configPath string) error {
 // `main.version` (see cmd/receptor-daemon/main.go), reported on every
 // check-in purely as telemetry — Memory uses it to flag out-of-date
 // daemons in the Integrations UI, nothing here acts on it.
+//
+// The very first thing this does is check whether it's starting up
+// right after an update that hasn't yet proven itself healthy (see
+// rollback.go) — before anything else, so a new binary that panics
+// early in its own startup still gets caught by this on its next
+// crash-restart.
 func Run(ctx context.Context, cfg config.Config, configPath string, version string) error {
 	if cfg.APIKey == "" || cfg.ServerURL == "" {
 		return fmt.Errorf("not configured — run `receptor-daemon init` first")
+	}
+
+	if opts, err := service.ResolveOptions(configPath, false); err == nil {
+		if checkForBadUpdateAndRollBackIfNeeded(opts.BinaryPath, configPath) {
+			return fmt.Errorf("rolled back a bad update to the previous version — waiting to be restarted")
+		}
 	}
 
 	stateDir := StateDir(configPath)
@@ -133,13 +146,25 @@ func Run(ctx context.Context, cfg config.Config, configPath string, version stri
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
+	// Cleared (harmlessly a no-op if there was nothing pending) after
+	// this run's first successful check-in — see rollback.go. Tracked
+	// locally just to avoid hitting disk on every single successful
+	// check-in forever, not only the first.
+	updateConfirmed := false
+
 	log.Printf("receptor-daemon running: %d folder(s), syncing every %d minutes, checking in every %s", len(engines), cfg.SyncIntervalMinutes, CheckInInterval)
 	for {
 		select {
 		case <-syncTicker.C:
 			runOnce()
 		case <-checkInTicker.C:
-			foldersChanged, intervalChanged := checkIn(ctx, client, &cfg, configPath, version)
+			foldersChanged, intervalChanged, ok := checkIn(ctx, client, &cfg, configPath, version)
+			if ok && !updateConfirmed {
+				if err := clearUpdateState(configPath); err != nil {
+					log.Printf("could not clear update-rollback state: %v", err)
+				}
+				updateConfirmed = true
+			}
 			if foldersChanged {
 				engines = buildEngines(cfg, stateDir, client, activityLog)
 				if len(engines) == 0 {

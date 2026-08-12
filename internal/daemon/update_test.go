@@ -65,6 +65,55 @@ func TestApplyDaemonUpdateWritesVerifiedBinaryAndReportsNoServiceInstalled(t *te
 	if _, err := os.Stat(binaryPath + ".update-tmp"); !os.IsNotExist(err) {
 		t.Error("expected the temp file to be gone after a successful rename")
 	}
+
+	state, err := loadUpdateState(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == nil || state.PendingVersion != "v0.5.0" || state.Attempts != 0 {
+		t.Fatalf("expected a fresh pending update_state.json for v0.5.0, got %+v", state)
+	}
+}
+
+func TestApplyDaemonUpdateBacksUpTheCurrentBinary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	payload := []byte("new receptor-daemon binary contents")
+	sum := sha256.Sum256(payload)
+	expectedSha256 := hex.EncodeToString(sum[:])
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Receptor-Daemon-Version", "v0.5.0")
+		w.Header().Set("X-Receptor-Daemon-Sha256", expectedSha256)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	client := core.NewMemoryClient(srv.URL, "mem_test")
+	binaryPath := filepath.Join(t.TempDir(), "receptor-daemon")
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(binaryPath, []byte("old working binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ApplyDaemonUpdate(context.Background(), client, binaryPath, configPath); err != nil {
+		t.Fatal(err)
+	}
+
+	backup, err := os.ReadFile(binaryPath + ".previous")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backup) != "old working binary" {
+		t.Fatalf("expected the pre-update binary preserved as .previous, got %q", backup)
+	}
+	current, err := os.ReadFile(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != string(payload) {
+		t.Fatalf("expected the new binary now at the main path, got %q", current)
+	}
 }
 
 func TestApplyDaemonUpdateReturnsErrorOnChecksumMismatchAndWritesNothing(t *testing.T) {
