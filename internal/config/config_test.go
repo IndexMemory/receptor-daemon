@@ -134,6 +134,13 @@ func TestUserConfigDirForEUIDIgnoresSudoUserWhenNotRoot(t *testing.T) {
 	}
 	t.Setenv("SUDO_USER", self.Username)
 	t.Setenv("HOME", "/should-be-used-since-euid-is-not-0")
+	// os.UserConfigDir() checks $XDG_CONFIG_HOME before $HOME on Linux —
+	// some CI runners preset it (observed on GitHub's ubuntu-latest,
+	// pointing at the real runner user's own .config), which would
+	// silently defeat the $HOME override above and make this assertion
+	// flaky depending on the environment. Force the $HOME-based path
+	// deterministically regardless of what's ambient.
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	dir, err := userConfigDirForEUID(501) // any non-zero euid
 	if err != nil {
