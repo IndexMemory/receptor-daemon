@@ -7,15 +7,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/IndexMemory/receptor-daemon/internal/sudoenv"
 )
 
 const launchdLabel = "com.indexmemory.receptor-daemon"
 
+// launchdPlistPath resolves the per-user plist path via sudoenv (see its
+// doc comment) rather than os.UserHomeDir() directly — needed so `sudo
+// receptor-daemon update` (needed whenever the binary lives somewhere
+// root-owned, e.g. /usr/local/bin — the documented install path)
+// correctly finds the real plist instead of one under root's own home.
 func launchdPlistPath(system bool) (string, error) {
+	return launchdPlistPathForEUID(system, os.Geteuid())
+}
+
+// launchdPlistPathForEUID is the pure logic behind launchdPlistPath,
+// split out so it's testable with an explicit euid — same pattern as
+// systemdUnitPathForEUID in systemd.go. Needed because a local test
+// runner's *actual* os.Geteuid() (e.g. root by default inside a plain
+// `golang` Docker image, unlike GitHub Actions' non-root runner) would
+// otherwise leak into tests that have nothing to do with sudo.
+func launchdPlistPathForEUID(system bool, euid int) (string, error) {
 	if system {
 		return "/Library/LaunchDaemons/" + launchdLabel + ".plist", nil
 	}
-	home, err := os.UserHomeDir()
+	home, _, err := sudoenv.RealUserForEUID(euid)
 	if err != nil {
 		return "", err
 	}
@@ -56,11 +73,29 @@ func launchdPlistContent(opts Options) string {
 `, launchdLabel, opts.BinaryPath, opts.ConfigPath, logPath, logPath)
 }
 
-func domainTarget(system bool) string {
+// domainTarget resolves via sudoenv, not os.Getuid() directly — under a
+// genuine sudo invocation both real and effective uid are 0, so
+// os.Getuid() would compute the invalid "gui/0" domain the original
+// root-guard was built to avoid entirely (see
+// guardAgainstRootPerUserInstall in options.go); resolving the real
+// invoking user's uid via $SUDO_USER instead makes "gui/<real-uid>"
+// correct even when this process itself is running as root.
+func domainTarget(system bool) (string, error) {
+	return domainTargetForEUID(system, os.Geteuid())
+}
+
+// domainTargetForEUID is the pure logic behind domainTarget, split out
+// so it's testable with an explicit euid — same pattern as
+// launchdPlistPathForEUID above.
+func domainTargetForEUID(system bool, euid int) (string, error) {
 	if system {
-		return "system"
+		return "system", nil
 	}
-	return fmt.Sprintf("gui/%d", os.Getuid())
+	_, uid, err := sudoenv.RealUserForEUID(euid)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("gui/%d", uid), nil
 }
 
 func runLaunchctl(args ...string) error {
@@ -93,10 +128,14 @@ func Install(opts Options) error {
 	if err := os.WriteFile(path, []byte(launchdPlistContent(opts)), 0o644); err != nil {
 		return err
 	}
-	target := domainTarget(opts.System) + "/" + launchdLabel
+	domain, err := domainTarget(opts.System)
+	if err != nil {
+		return err
+	}
+	target := domain + "/" + launchdLabel
 	// Best-effort: harmless/expected to fail when nothing was loaded yet.
 	_ = runLaunchctl("bootout", target)
-	if err := runLaunchctl("bootstrap", domainTarget(opts.System), path); err != nil {
+	if err := runLaunchctl("bootstrap", domain, path); err != nil {
 		return fmt.Errorf("launchctl bootstrap: %w", err)
 	}
 	// RunAtLoad is supposed to start the job immediately on bootstrap,
@@ -122,8 +161,11 @@ func Restart(opts Options) error {
 	if err := guardAgainstRootPerUserInstall(opts); err != nil {
 		return err
 	}
-	target := domainTarget(opts.System) + "/" + launchdLabel
-	if err := runLaunchctl("kickstart", "-k", target); err != nil {
+	domain, err := domainTarget(opts.System)
+	if err != nil {
+		return err
+	}
+	if err := runLaunchctl("kickstart", "-k", domain+"/"+launchdLabel); err != nil {
 		return fmt.Errorf("launchctl kickstart: %w", err)
 	}
 	return nil
@@ -139,7 +181,9 @@ func Uninstall(opts Options) error {
 		return err
 	}
 	// Best-effort: the job may already be stopped/missing.
-	_ = runLaunchctl("bootout", domainTarget(opts.System)+"/"+launchdLabel)
+	if domain, domainErr := domainTarget(opts.System); domainErr == nil {
+		_ = runLaunchctl("bootout", domain+"/"+launchdLabel)
+	}
 
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
@@ -157,17 +201,29 @@ func Uninstall(opts Options) error {
 // (System: false) only loads at user login; unlike systemd, there's no
 // "linger"-style workaround on macOS to make a per-user job start at
 // boot without a login session.
+//
+// Best-effort for the per-user check specifically: if the per-user path
+// can't be resolved (root with no $SUDO_USER — not a genuine sudo
+// invocation), that's treated as "no per-user install found" rather
+// than a hard error — see systemd.go's Status for the same reasoning.
 func Status() (installed bool, system bool, err error) {
-	sysPath, err := launchdPlistPath(true)
+	return statusForEUID(os.Geteuid())
+}
+
+// statusForEUID is the pure logic behind Status, split out so it's
+// testable with an explicit euid — same reasoning as
+// launchdPlistPathForEUID above.
+func statusForEUID(euid int) (installed bool, system bool, err error) {
+	sysPath, err := launchdPlistPathForEUID(true, euid)
 	if err != nil {
 		return false, false, err
 	}
 	if _, statErr := os.Stat(sysPath); statErr == nil {
 		return true, true, nil
 	}
-	userPath, err := launchdPlistPath(false)
+	userPath, err := launchdPlistPathForEUID(false, euid)
 	if err != nil {
-		return false, false, err
+		return false, false, nil
 	}
 	if _, statErr := os.Stat(userPath); statErr == nil {
 		return true, false, nil

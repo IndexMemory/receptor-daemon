@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/IndexMemory/receptor-daemon/internal/sudoenv"
 )
 
 // Options describes what to install and where.
@@ -29,15 +31,20 @@ type Options struct {
 	System bool
 }
 
-// guardAgainstRootPerUserInstall refuses a non-system Options when the
-// process is running as root (e.g. accidentally prefixed with sudo). A
-// per-user install needs to target the invoking user's actual session,
-// which running as root can't determine: on macOS this produces an
-// invalid "gui/0" launchd domain that fails outright (the bug that
-// prompted this guard); on Linux it would instead silently succeed
-// against *root's own* --user systemd instance rather than the real
-// user's, which is arguably worse — a silent wrong result instead of a
-// loud error. --system is the correct way to actually run as root.
+// guardAgainstRootPerUserInstall refuses a non-system Options when
+// running as root with no resolvable invoking user (e.g. a root cron
+// job — not a sudo invocation at all). A per-user install needs to
+// target the invoking user's actual session; when running as root via
+// sudo, sudoenv resolves that from $SUDO_USER (see
+// internal/sudoenv.RealUser) and the per-user systemd/launchd path and
+// (on macOS) launchd domain functions use it directly, so a genuine
+// sudo invocation is allowed through. What's refused is root with *no*
+// way to determine a real per-user target: on macOS that would otherwise
+// produce an invalid "gui/0" launchd domain that fails outright (the
+// original bug that prompted this guard); on Linux it would instead
+// silently succeed against *root's own* --user systemd instance, which
+// is arguably worse — a silent wrong result instead of a loud error.
+// --system is the correct way to actually run as root with intent.
 func guardAgainstRootPerUserInstall(opts Options) error {
 	return guardAgainstRootPerUserInstallEUID(opts, os.Geteuid())
 }
@@ -46,8 +53,11 @@ func guardAgainstRootPerUserInstall(opts Options) error {
 // guardAgainstRootPerUserInstall, split out so it's testable without
 // actually needing to run as root (or not) in CI.
 func guardAgainstRootPerUserInstallEUID(opts Options, euid int) error {
-	if !opts.System && euid == 0 {
-		return fmt.Errorf("refusing a per-user start/stop while running as root (e.g. via sudo) — either drop sudo, or pass --system for a real system-wide install")
+	if opts.System || euid != 0 {
+		return nil
+	}
+	if _, _, err := sudoenv.RealUserForEUID(euid); err != nil {
+		return fmt.Errorf("refusing a per-user start/stop while running as root with no resolvable invoking user (e.g. via sudo) — either drop sudo, or pass --system for a real system-wide install: %w", err)
 	}
 	return nil
 }

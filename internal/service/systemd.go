@@ -6,17 +6,35 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
+
+	"github.com/IndexMemory/receptor-daemon/internal/sudoenv"
 )
 
 const systemdUnitName = "receptor-daemon.service"
 
+// systemdUnitPath resolves the per-user unit path via sudoenv (see its
+// doc comment) rather than os.UserHomeDir() directly — without this, a
+// `sudo receptor-daemon update` (needed whenever the binary lives
+// somewhere root-owned, e.g. /usr/local/bin — the documented install
+// path) would silently look at */root/.config/...* instead of the real
+// unit file, making Status() wrongly report "not installed" and
+// ApplyDaemonUpdate skip restarting the service it just updated.
 func systemdUnitPath(system bool) (string, error) {
+	return systemdUnitPathForEUID(system, os.Geteuid())
+}
+
+// systemdUnitPathForEUID is the pure logic behind systemdUnitPath, split
+// out so it's testable with an explicit euid — same pattern as
+// guardAgainstRootPerUserInstallEUID in options.go. Needed because a
+// local test runner's *actual* os.Geteuid() (e.g. root by default inside
+// a plain `golang` Docker image, unlike GitHub Actions' non-root runner)
+// would otherwise leak into tests that have nothing to do with sudo.
+func systemdUnitPathForEUID(system bool, euid int) (string, error) {
 	if system {
 		return "/etc/systemd/system/" + systemdUnitName, nil
 	}
-	home, err := os.UserHomeDir()
+	home, _, err := sudoenv.RealUserForEUID(euid)
 	if err != nil {
 		return "", err
 	}
@@ -94,11 +112,15 @@ func Install(opts Options) error {
 }
 
 func enableLinger() error {
-	u, err := user.Current()
+	// sudoenv.Username(), not user.Current(): under a genuine sudo
+	// invocation this must be the real invoking user, not root itself —
+	// otherwise this would enable lingering for root, not the account
+	// the per-user service actually runs as.
+	username, err := sudoenv.Username()
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("loginctl", "enable-linger", u.Username)
+	cmd := exec.Command("loginctl", "enable-linger", username)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -108,17 +130,33 @@ func enableLinger() error {
 // file present on disk — the ground truth, not a separately tracked
 // flag that could drift from reality) and whether it's the system-wide
 // or per-user one. Checks the system path first.
+//
+// Best-effort for the per-user check specifically: if the per-user path
+// can't be resolved (root with no $SUDO_USER — not a genuine sudo
+// invocation), that's treated as "no per-user install found" rather
+// than a hard error. Status is read-only and used in places that don't
+// even check its error (e.g. remoteConfigFromLocal's BootStartEnabled
+// telemetry), so staying lenient here matches how it's actually used —
+// mutating operations (Install/Uninstall/Restart) hard-fail instead via
+// guardAgainstRootPerUserInstall, which is the right place for that.
 func Status() (installed bool, system bool, err error) {
-	sysPath, err := systemdUnitPath(true)
+	return statusForEUID(os.Geteuid())
+}
+
+// statusForEUID is the pure logic behind Status, split out so it's
+// testable with an explicit euid — same reasoning as
+// systemdUnitPathForEUID above.
+func statusForEUID(euid int) (installed bool, system bool, err error) {
+	sysPath, err := systemdUnitPathForEUID(true, euid)
 	if err != nil {
 		return false, false, err
 	}
 	if _, statErr := os.Stat(sysPath); statErr == nil {
 		return true, true, nil
 	}
-	userPath, err := systemdUnitPath(false)
+	userPath, err := systemdUnitPathForEUID(false, euid)
 	if err != nil {
-		return false, false, err
+		return false, false, nil
 	}
 	if _, statErr := os.Stat(userPath); statErr == nil {
 		return true, false, nil

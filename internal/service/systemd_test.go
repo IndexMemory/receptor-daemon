@@ -28,7 +28,11 @@ func TestSystemdUnitContentTargetDiffersByScope(t *testing.T) {
 }
 
 func TestSystemdUnitPathDiffersByScope(t *testing.T) {
-	systemPath, err := systemdUnitPath(true)
+	// Uses the non-root euid variant deliberately: this test doesn't
+	// exercise sudo behavior at all, so it shouldn't depend on whatever
+	// euid the test runner actually happens to run as (e.g. root by
+	// default inside a plain `golang` Docker image).
+	systemPath, err := systemdUnitPathForEUID(true, 501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +40,7 @@ func TestSystemdUnitPathDiffersByScope(t *testing.T) {
 		t.Fatalf("unexpected system unit path: %s", systemPath)
 	}
 
-	userPath, err := systemdUnitPath(false)
+	userPath, err := systemdUnitPathForEUID(false, 501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +72,7 @@ func TestInstallWritesUnitFileWithGeneratedContent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	path, err := systemdUnitPath(false)
+	path, err := systemdUnitPathForEUID(false, 501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +97,7 @@ func TestStatusReportsNotInstalledWhenNoUnitFileExists(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	installed, _, err := Status()
+	installed, _, err := statusForEUID(501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +113,7 @@ func TestStatusReportsInstalledUserScopeAfterWritingUnitFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	path, err := systemdUnitPath(false)
+	path, err := systemdUnitPathForEUID(false, 501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +124,7 @@ func TestStatusReportsInstalledUserScopeAfterWritingUnitFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	installed, system, err := Status()
+	installed, system, err := statusForEUID(501)
 	if err != nil {
 		t.Fatal(err)
 	}

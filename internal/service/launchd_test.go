@@ -26,7 +26,11 @@ func TestLaunchdPlistContentIncludesBinaryAndConfigPaths(t *testing.T) {
 }
 
 func TestLaunchdPlistPathDiffersByScope(t *testing.T) {
-	systemPath, err := launchdPlistPath(true)
+	// Uses the non-root euid variant deliberately: this test doesn't
+	// exercise sudo behavior at all, so it shouldn't depend on whatever
+	// euid the test runner actually happens to run as (e.g. root by
+	// default inside a plain `golang` Docker image).
+	systemPath, err := launchdPlistPathForEUID(true, 501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +38,7 @@ func TestLaunchdPlistPathDiffersByScope(t *testing.T) {
 		t.Fatalf("unexpected system plist path: %s", systemPath)
 	}
 
-	userPath, err := launchdPlistPath(false)
+	userPath, err := launchdPlistPathForEUID(false, 501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,11 +48,19 @@ func TestLaunchdPlistPathDiffersByScope(t *testing.T) {
 }
 
 func TestDomainTargetSystemVsUser(t *testing.T) {
-	if domainTarget(true) != "system" {
-		t.Fatalf("expected system domain target to be 'system', got %s", domainTarget(true))
+	system, err := domainTargetForEUID(true, 501)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.HasPrefix(domainTarget(false), "gui/") {
-		t.Fatalf("expected user domain target to start with 'gui/', got %s", domainTarget(false))
+	if system != "system" {
+		t.Fatalf("expected system domain target to be 'system', got %s", system)
+	}
+	user, err := domainTargetForEUID(false, 501)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(user, "gui/") {
+		t.Fatalf("expected user domain target to start with 'gui/', got %s", user)
 	}
 }
 
@@ -56,7 +68,7 @@ func TestInstallWritesPlistFileWithGeneratedContent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	path, err := launchdPlistPath(false)
+	path, err := launchdPlistPathForEUID(false, 501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +93,7 @@ func TestStatusReportsNotInstalledWhenNoPlistExists(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	installed, _, err := Status()
+	installed, _, err := statusForEUID(501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +110,7 @@ func TestStatusReportsInstalledUserScopeAfterWritingPlist(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	path, err := launchdPlistPath(false)
+	path, err := launchdPlistPathForEUID(false, 501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +122,7 @@ func TestStatusReportsInstalledUserScopeAfterWritingPlist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	installed, system, err := Status()
+	installed, system, err := statusForEUID(501)
 	if err != nil {
 		t.Fatal(err)
 	}

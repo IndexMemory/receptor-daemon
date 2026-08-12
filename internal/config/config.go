@@ -13,9 +13,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"runtime"
+
+	"github.com/IndexMemory/receptor-daemon/internal/sudoenv"
 )
 
 // DefaultSyncIntervalMinutes matches the default used by receptor-ios and
@@ -75,13 +76,15 @@ func userConfigDir() (string, error) {
 // userConfigDirForEUID is the pure logic behind userConfigDir, split out
 // so it's testable without actually running as root — same pattern as
 // guardAgainstRootPerUserInstallEUID in internal/service/options.go.
+// Falls back to the plain os.UserConfigDir() if sudoenv can't resolve a
+// real invoking user (e.g. root with no $SUDO_USER — not a sudo
+// invocation at all): a config-load failure already has a clear
+// "not initialized" error path, so a soft fallback here is fine, unlike
+// internal/service's mutating operations, which hard-fail instead (see
+// guardAgainstRootPerUserInstall).
 func userConfigDirForEUID(euid int) (string, error) {
-	if euid == 0 {
-		if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
-			if u, err := user.Lookup(sudoUser); err == nil && u.HomeDir != "" {
-				return configDirForHome(u.HomeDir), nil
-			}
-		}
+	if home, _, err := sudoenv.RealUserForEUID(euid); err == nil {
+		return configDirForHome(home), nil
 	}
 	return os.UserConfigDir()
 }
