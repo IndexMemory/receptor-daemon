@@ -56,6 +56,15 @@ func TestUploadSendsMultipartBodyWithBearerAuth(t *testing.T) {
 		if !strings.Contains(string(body), "hello world") {
 			t.Errorf("expected file contents in body")
 		}
+		// The actual bug this guards against: Go's multipart.CreateFormFile
+		// always hardcodes application/octet-stream regardless of the
+		// file's real type — Memory's upload route trusts this value
+		// as-is and stores it as mime_type, which its classification
+		// pipeline uses to decide whether to even attempt reading the
+		// file, so an uploaded .txt file must NOT carry octet-stream.
+		if !strings.Contains(string(body), "Content-Type: text/plain") {
+			t.Errorf("expected the files part to carry a text/plain Content-Type, got body:\n%s", body)
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true,"results":[{"status":"queued","id":"doc_1","filename":"hello.txt"}]}`))
 	}))
@@ -68,6 +77,42 @@ func TestUploadSendsMultipartBodyWithBearerAuth(t *testing.T) {
 	}
 	if outcome.Status != StatusQueued || outcome.ID != "doc_1" {
 		t.Fatalf("unexpected outcome: %+v", outcome)
+	}
+}
+
+func TestUploadDetectsContentTypeForExtensionsWithNoBuiltInMimeMapping(t *testing.T) {
+	// .log isn't a registered MIME extension, unlike .txt — this exercises
+	// the content-sniffing fallback rather than the mime.TypeByExtension
+	// fast path, and is exactly what a real user hit: a .log file getting
+	// uploaded as application/octet-stream and coming back "Unreadable"
+	// in Memory even though it was plain text.
+	tmp := filepath.Join(t.TempDir(), "app.log")
+	if err := os.WriteFile(tmp, []byte("2026-08-12 12:00:00 started up\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotContentType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		for _, line := range strings.Split(string(body), "\r\n") {
+			if strings.HasPrefix(line, "Content-Type:") && !strings.HasPrefix(line, "Content-Type: multipart") {
+				gotContentType = strings.TrimSpace(strings.TrimPrefix(line, "Content-Type:"))
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"results":[{"status":"queued","id":"doc_1","filename":"app.log"}]}`))
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	if _, err := client.Upload(context.Background(), tmp, "app.log"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(gotContentType, "application/octet-stream") {
+		t.Fatalf("expected a text content type for a plain-text .log file, got %q", gotContentType)
+	}
+	if !strings.HasPrefix(gotContentType, "text/plain") {
+		t.Fatalf("expected text/plain (via content sniffing), got %q", gotContentType)
 	}
 }
 

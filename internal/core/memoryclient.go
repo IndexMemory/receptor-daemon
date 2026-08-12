@@ -7,11 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
+	"strings"
 )
 
 // MaxBytesPerFile mirrors MAX_BYTES_PER_FILE in app/api/upload/route.ts.
@@ -106,7 +110,7 @@ func (c *MemoryClient) Upload(ctx context.Context, filePath, filename string) (U
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	part, err := writer.CreateFormFile("files", filename)
+	part, err := createFormFile(writer, filename, detectContentType(filePath, filename))
 	if err != nil {
 		return UploadOutcome{}, err
 	}
@@ -152,6 +156,46 @@ func (c *MemoryClient) Upload(ctx context.Context, filePath, filename string) (U
 	}
 	r := decoded.Results[0]
 	return UploadOutcome{Status: r.Status, ID: r.ID, Filename: r.Filename, Error: r.Error}, nil
+}
+
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+
+// createFormFile mirrors multipart.Writer.CreateFormFile, except it lets
+// the caller supply the part's Content-Type instead of always hardcoding
+// application/octet-stream (CreateFormFile's actual stdlib behavior).
+// That default matters here: Memory's upload route trusts the uploaded
+// part's Content-Type as-is (`file.type || "application/octet-stream"`
+// in app/api/upload/route.ts) and stores it as the document's mime_type,
+// which its classification pipeline uses to decide whether to even
+// attempt reading the file — application/octet-stream gets treated as an
+// opaque, unreadable binary blob regardless of the file's real content.
+func createFormFile(writer *multipart.Writer, filename, contentType string) (io.Writer, error) {
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files"; filename="%s"`, quoteEscaper.Replace(filename)))
+	header.Set("Content-Type", contentType)
+	return writer.CreatePart(header)
+}
+
+// detectContentType figures out a file's real MIME type: first by
+// extension (covers the vast majority of cases), falling back to
+// sniffing the first 512 bytes of actual content for extensions Go's
+// built-in MIME table doesn't know about (e.g. .log) — still correctly
+// identifies plain text instead of defaulting to application/octet-stream.
+func detectContentType(filePath, filename string) string {
+	if t := mime.TypeByExtension(filepath.Ext(filename)); t != "" {
+		return t
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "application/octet-stream"
+	}
+	defer f.Close()
+	buf := make([]byte, 512)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return "application/octet-stream"
+	}
+	return http.DetectContentType(buf[:n])
 }
 
 func joinURL(base, p string) string {
