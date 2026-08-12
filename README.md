@@ -84,35 +84,29 @@ receptor-daemon init --sync-interval-minutes 30
 # of a long-running service)
 receptor-daemon sync
 
-# Connection, folder count, service status, and recent activity
+# Current configuration (server, masked API key, sync interval, folders
+# with their own ignore patterns), connection, service status, and
+# recent activity
 receptor-daemon status
 
 # Run receptor-daemon in the background from now on (systemd on Linux,
 # launchd on macOS) instead of needing a terminal open with `run`.
-# Default is per-user, no root needed.
 receptor-daemon start
 receptor-daemon stop
-
-# Run system-wide instead — needs sudo
-sudo receptor-daemon start --system
 
 # Which build you're running — check this first if something documented
 # here seems to be missing; you may be on an old binary
 receptor-daemon --version
 ```
 
-**Starting automatically on boot** — this is where the two `start` modes
-genuinely differ, not just in whether they need sudo:
-- **`--system`**: starts at boot on both platforms, independent of any
-  login — the systemd unit targets `multi-user.target`; the launchd job
-  is a `LaunchDaemon`. This is what you want on a headless server nobody
-  ever logs into interactively.
-- **Per-user (default)**: on Linux, `start` also runs `loginctl
-  enable-linger` for you as a best-effort step, so even a per-user
-  systemd unit starts at boot without requiring a login session. On
-  macOS, there's no equivalent — a per-user `LaunchAgent` only starts
-  when you log in; there's no "linger" workaround for that on macOS, so
-  use `--system` there if you need true boot-time start without a login.
+`start`/`stop` default to per-user (no sudo) — that's the right choice
+almost always, including for every test/dev setup. Add `--system` (needs
+sudo) only for a shared/headless machine nobody ever logs into: `sudo
+receptor-daemon start --system`. One platform detail if you do need it: on
+Linux, plain `start` already survives a reboot without logging in
+(`loginctl enable-linger`, done for you automatically); on macOS there's
+no such option, so `--system` is the only way to get real boot-time start
+there.
 
 Flags must come before the positional argument for a given subcommand
 (standard Go `flag` package behavior), e.g.
@@ -153,6 +147,34 @@ live API key. There's no OS-keyring integration here (unlike
 typically have no Secret Service daemon running (that requires an active
 desktop session), so a permission-restricted config file is the practical
 equivalent, not an oversight.
+
+## Remote configuration from Memory
+
+Once a receptor-kind API key is connected, `receptor-daemon run` (the
+background service) checks in with Memory every **1 minute** — a fixed
+cadence, independent of the sync interval, so a config change pushed from
+Memory's web UI feels responsive even if sync itself runs rarely. Every
+check-in reports the daemon's actual currently-running config (server-
+side, this is how Memory's Integrations page shows what's really
+happening, not just what was last requested); if an admin has edited the
+key's config there since the last check-in, the response carries the new
+config and the daemon applies it immediately: persists it to `config.json`
+(never touching `server_url`/`api_key` — those authenticate the channel
+this travels over, and aren't remotely settable), rebuilds its
+`SyncEngine`s if the folder list changed, reschedules its sync ticker if
+the interval changed, and reconciles boot-start via the same
+`service.Install`/`Uninstall` that `start`/`stop` use if that toggle
+changed.
+
+This only runs inside the `run` loop (i.e. once `start` has set the
+service up) — a one-off `sync` or manually running `receptor-daemon run`
+in a terminal doesn't check in.
+
+Remotely enabling boot-start always installs **per-user** (there's no way
+to request a `--system` install remotely — that needs root, which the
+daemon process may not have); remotely disabling it uninstalls whatever
+scope is actually running. If you need `--system`, set that up locally
+via `sudo receptor-daemon start --system`.
 
 ## Building from source
 
@@ -288,12 +310,25 @@ like Multipass, which default to arm64 guests on ARM hosts.
 
 ## Known limitations / not yet implemented
 
-- **Not admin-gated**, unlike the OAuth path in `receptor-ios`/
-  `receptor-desktop` — see the Authentication section above.
+- **API key *creation* is now admin-gated for receptor-kind keys**
+  (checking "Receptor Daemon?" in Memory's UI requires `active_role ===
+  "admin"`, same enforcement shape as the OAuth `client_kind: "receptor"`
+  path in `receptor-ios`/`receptor-desktop`) — the daemon's own
+  authentication is still a plain, non-expiring API key though, not OAuth;
+  that part of the original gap is unchanged.
 - **No deletion sync.** Deleting a file locally does not delete it from
   Memory.
-- **No device-code OAuth flow** — could revisit if admin-gating for this
-  product becomes a real requirement.
+- **Remote configuration (sync interval, folders, boot-start) is
+  implemented but not yet verified end-to-end** — both sides (Memory's
+  check-in endpoint + Integrations UI, and this daemon's check-in loop)
+  are unit-tested and typecheck/build clean, but nobody has actually
+  edited a real daemon's config in a real Memory instance and watched it
+  land on a real machine yet. Remote API key rotation and remote
+  binary/version updates remain explicitly out of scope (see the plan
+  this was built from) — rotation needs a grace-period design (revoking
+  the old key immediately would break the very check-in that delivers the
+  new one), and self-update needs checksum/signature verification before
+  executing a downloaded binary.
 - **No package manager distribution** — no `.deb`, no Homebrew formula
   yet. Ships as a plain binary via GitHub Releases, same tradeoff already
   made for the other two Receptor apps.

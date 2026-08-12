@@ -9,6 +9,7 @@ package service
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Options describes what to install and where.
@@ -49,4 +50,24 @@ func guardAgainstRootPerUserInstallEUID(opts Options, euid int) error {
 		return fmt.Errorf("refusing a per-user start/stop while running as root (e.g. via sudo) — either drop sudo, or pass --system for a real system-wide install")
 	}
 	return nil
+}
+
+// ResolveOptions fills in Options' BinaryPath (resolved to an absolute,
+// symlink-free path so the generated unit/plist keeps working regardless
+// of how the current process was invoked) and ConfigPath. Shared by
+// cmd/receptor-daemon (start/stop/the setup wizard) and internal/daemon
+// (reconciling boot-start when a remote config change toggles it).
+func ResolveOptions(configPath string, system bool) (Options, error) {
+	binaryPath, err := os.Executable()
+	if err != nil {
+		return Options{}, err
+	}
+	if resolved, err := filepath.EvalSymlinks(binaryPath); err == nil {
+		binaryPath = resolved
+	}
+	absConfigPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return Options{}, err
+	}
+	return Options{BinaryPath: binaryPath, ConfigPath: absConfigPath, System: system}, nil
 }

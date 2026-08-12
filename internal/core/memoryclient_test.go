@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -159,5 +160,73 @@ func TestNonOKStatusReturnsFalseWithoutError(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected false for a 500 response")
+	}
+}
+
+func TestCheckInSendsCurrentConfigAndParsesNoUpdateResponse(t *testing.T) {
+	current := RemoteConfig{
+		SyncIntervalMinutes: 15,
+		Folders:             []RemoteFolder{{Path: "/srv/docs", IgnorePatterns: []string{"node_modules"}}},
+		BootStartEnabled:    true,
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/receptor-checkin" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer mem_test" {
+			t.Errorf("unexpected Authorization header: %q", got)
+		}
+		var got RemoteConfig
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got.SyncIntervalMinutes != 15 || len(got.Folders) != 1 || got.Folders[0].Path != "/srv/docs" || !got.BootStartEnabled {
+			t.Errorf("unexpected reported config: %+v", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"needs_update":false,"config":null,"version":3}`))
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	result, err := client.CheckIn(context.Background(), current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.NeedsUpdate {
+		t.Fatal("expected NeedsUpdate to be false")
+	}
+	if result.Config != nil {
+		t.Fatalf("expected nil Config when NeedsUpdate is false, got %+v", result.Config)
+	}
+	if result.Version != 3 {
+		t.Fatalf("expected version 3, got %d", result.Version)
+	}
+}
+
+func TestCheckInParsesNeedsUpdateResponseWithConfig(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"needs_update":true,"config":{"sync_interval_minutes":30,"folders":[{"path":"/home/user/notes","ignore_patterns":["*.tmp"]}],"boot_start_enabled":false},"version":4}`))
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.NeedsUpdate {
+		t.Fatal("expected NeedsUpdate to be true")
+	}
+	if result.Config == nil {
+		t.Fatal("expected a non-nil Config when NeedsUpdate is true")
+	}
+	if result.Config.SyncIntervalMinutes != 30 || len(result.Config.Folders) != 1 || result.Config.Folders[0].Path != "/home/user/notes" {
+		t.Fatalf("unexpected config: %+v", result.Config)
+	}
+	if result.Version != 4 {
+		t.Fatalf("expected version 4, got %d", result.Version)
 	}
 }

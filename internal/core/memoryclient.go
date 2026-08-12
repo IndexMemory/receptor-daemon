@@ -158,6 +158,73 @@ func (c *MemoryClient) Upload(ctx context.Context, filePath, filename string) (U
 	return UploadOutcome{Status: r.Status, ID: r.ID, Filename: r.Filename, Error: r.Error}, nil
 }
 
+// RemoteFolder mirrors Memory's ReceptorDaemonConfig.folders[] wire shape
+// (lib/api_keys.ts).
+type RemoteFolder struct {
+	Path           string   `json:"path"`
+	IgnorePatterns []string `json:"ignore_patterns"`
+}
+
+// RemoteConfig mirrors Memory's ReceptorDaemonConfig — the subset of
+// config a receptor-kind API key can remotely control from Memory's web
+// UI. ServerURL/APIKey are deliberately excluded: they authenticate the
+// very channel this travels over, so remotely changing them is a separate,
+// harder problem (rotation needs a grace period) left for later.
+type RemoteConfig struct {
+	SyncIntervalMinutes int            `json:"sync_interval_minutes"`
+	Folders             []RemoteFolder `json:"folders"`
+	BootStartEnabled    bool           `json:"boot_start_enabled"`
+}
+
+// CheckInResult is Memory's POST /api/receptor-checkin response.
+type CheckInResult struct {
+	NeedsUpdate bool
+	// Config is only non-nil when NeedsUpdate is true.
+	Config  *RemoteConfig
+	Version int
+}
+
+// CheckIn reports the daemon's currently-running config to Memory and
+// asks whether there's a pending remote edit to apply. See Memory's
+// lib/api_keys.ts applyReceptorCheckin() for the full protocol: a
+// compare-and-swap on version means a stale in-flight check-in can't
+// stomp a newer admin edit — worst case, this daemon just sees
+// NeedsUpdate again on its next check-in a minute later.
+func (c *MemoryClient) CheckIn(ctx context.Context, current RemoteConfig) (CheckInResult, error) {
+	body, err := json.Marshal(current)
+	if err != nil {
+		return CheckInResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, joinURL(c.BaseURL, "api/receptor-checkin"), bytes.NewReader(body))
+	if err != nil {
+		return CheckInResult{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return CheckInResult{}, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return CheckInResult{}, &HTTPError{StatusCode: resp.StatusCode, Body: string(respBody)}
+	}
+
+	var decoded struct {
+		OK          bool          `json:"ok"`
+		NeedsUpdate bool          `json:"needs_update"`
+		Config      *RemoteConfig `json:"config"`
+		Version     int           `json:"version"`
+	}
+	if err := json.Unmarshal(respBody, &decoded); err != nil {
+		return CheckInResult{}, fmt.Errorf("failed to decode server response: %w", err)
+	}
+	return CheckInResult{NeedsUpdate: decoded.NeedsUpdate, Config: decoded.Config, Version: decoded.Version}, nil
+}
+
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
 
 // createFormFile mirrors multipart.Writer.CreateFormFile, except it lets

@@ -101,15 +101,12 @@ Usage:
   receptor-daemon folders list
   receptor-daemon sync
   receptor-daemon status
-  receptor-daemon start [--system]               runs it in the background from
-                                                  now on, via systemd/launchd;
-                                                  --system starts automatically
-                                                  at boot even without logging
-                                                  in (needs sudo); per-user
-                                                  needs no sudo (Linux: still
-                                                  starts at boot via systemd
-                                                  lingering; macOS: starts at
-                                                  login only)
+  receptor-daemon start [--system]               runs it in the background
+                                                  from now on; --system is
+                                                  for a shared/headless
+                                                  machine nobody logs into
+                                                  (needs sudo) — most people
+                                                  never need it
   receptor-daemon stop [--system]                stops the background service
                                                   (config is untouched)
   receptor-daemon --version                      print the build version —
@@ -160,7 +157,7 @@ func cmdDefault() error {
 		return err
 	}
 
-	printStatusReport(daemon.Status(context.Background(), cfg, configPath))
+	printStatusReport(cfg, daemon.Status(context.Background(), cfg, configPath))
 	fmt.Println("\nAlready configured. Run `receptor-daemon init` to review/update your setup, `receptor-daemon --help` for the full command list, or `receptor-daemon folders add <path>` to watch another folder.")
 	return nil
 }
@@ -303,14 +300,13 @@ func runSetupWizard(configPath string) error {
 		return fmt.Errorf("reading input: %w", err)
 	}
 	if startNow {
-		fmt.Println("A system-wide start runs automatically at boot, even without logging in, but needs sudo.")
-		fmt.Println("A per-user start needs no sudo — on Linux it can still start at boot via systemd lingering; on macOS it only starts once you log in.")
+		fmt.Println("System-wide needs sudo and is only for a shared/headless machine nobody logs into — if unsure, say no.")
 		systemWide, err := promptYesNo(reader, "Start it system-wide?", false)
 		if err != nil {
 			return fmt.Errorf("reading input: %w", err)
 		}
 
-		opts, err := resolveInstallOptions(configPath, systemWide)
+		opts, err := service.ResolveOptions(configPath, systemWide)
 		if err != nil {
 			return err
 		}
@@ -463,7 +459,7 @@ func restartServiceIfRunning(configPath string) {
 	if !installed {
 		return
 	}
-	opts, err := resolveInstallOptions(configPath, system)
+	opts, err := service.ResolveOptions(configPath, system)
 	if err == nil {
 		err = service.Uninstall(opts)
 	}
@@ -621,6 +617,20 @@ func splitPatterns(text string) []string {
 	return out
 }
 
+// maskAPIKey shows just enough of the key to confirm which one is
+// configured (e.g. to cross-check against Memory's web UI) without
+// printing the live secret to a terminal, where it could end up in
+// scrollback, a screen share, or a copy-pasted bug report.
+func maskAPIKey(key string) string {
+	if key == "" {
+		return "(not set)"
+	}
+	if len(key) <= 8 {
+		return strings.Repeat("*", len(key))
+	}
+	return key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
+}
+
 // MARK: - sync / status / run
 
 func cmdSync(args []string) error {
@@ -651,11 +661,29 @@ func cmdStatus(args []string) error {
 		return err
 	}
 
-	printStatusReport(daemon.Status(context.Background(), cfg, *configPath))
+	printStatusReport(cfg, daemon.Status(context.Background(), cfg, *configPath))
 	return nil
 }
 
-func printStatusReport(report daemon.StatusReport) {
+func printStatusReport(cfg config.Config, report daemon.StatusReport) {
+	fmt.Println("Configuration:")
+	fmt.Printf("  Server URL:    %s\n", cfg.ServerURL)
+	fmt.Printf("  API key:       %s\n", maskAPIKey(cfg.APIKey))
+	fmt.Printf("  Sync interval: %d minute(s)\n", cfg.SyncIntervalMinutes)
+	if len(cfg.Folders) == 0 {
+		fmt.Println("  Folders:       (none configured)")
+	} else {
+		fmt.Println("  Folders:")
+		for _, f := range cfg.Folders {
+			line := "    " + f.Path
+			if len(f.IgnorePatterns) > 0 {
+				line += fmt.Sprintf(" (ignoring: %s)", strings.Join(f.IgnorePatterns, ", "))
+			}
+			fmt.Println(line)
+		}
+	}
+	fmt.Println()
+
 	if report.Connected {
 		fmt.Println("connected")
 	} else {
@@ -700,28 +728,10 @@ func cmdRun(args []string) error {
 // keeps the Install/Uninstall names since that's standard vocabulary for
 // what it's actually doing at the systemd/launchd level.
 
-// resolveInstallOptions fills in service.Options' BinaryPath (resolved to
-// an absolute, symlink-free path so the generated unit/plist keeps
-// working regardless of how it was invoked) and ConfigPath.
-func resolveInstallOptions(configPath string, system bool) (service.Options, error) {
-	binaryPath, err := os.Executable()
-	if err != nil {
-		return service.Options{}, err
-	}
-	if resolved, err := filepath.EvalSymlinks(binaryPath); err == nil {
-		binaryPath = resolved
-	}
-	absConfigPath, err := filepath.Abs(configPath)
-	if err != nil {
-		return service.Options{}, err
-	}
-	return service.Options{BinaryPath: binaryPath, ConfigPath: absConfigPath, System: system}, nil
-}
-
 func cmdStart(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
 	configPath := addConfigFlag(fs)
-	system := fs.Bool("system", false, "run system-wide — starts at boot, even without logging in (needs root) — instead of per-user")
+	system := fs.Bool("system", false, "for a shared/headless machine nobody logs into (needs sudo); most people don't need this")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -730,7 +740,7 @@ func cmdStart(args []string) error {
 		return err
 	}
 
-	opts, err := resolveInstallOptions(*configPath, *system)
+	opts, err := service.ResolveOptions(*configPath, *system)
 	if err != nil {
 		return err
 	}
@@ -744,7 +754,7 @@ func cmdStart(args []string) error {
 func cmdStop(args []string) error {
 	fs := flag.NewFlagSet("stop", flag.ExitOnError)
 	configPath := addConfigFlag(fs)
-	system := fs.Bool("system", false, "stop the system-wide service instead of the per-user one")
+	system := fs.Bool("system", false, "stop the system-wide service instead of the per-user one (needs sudo)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

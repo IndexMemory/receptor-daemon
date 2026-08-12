@@ -117,19 +117,36 @@ func Run(ctx context.Context, cfg config.Config, configPath string) error {
 	}
 	runOnce()
 
-	interval := time.Duration(cfg.SyncIntervalMinutes) * time.Minute
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	syncTicker := time.NewTicker(time.Duration(cfg.SyncIntervalMinutes) * time.Minute)
+	defer func() { syncTicker.Stop() }() // closure: must stop whatever ticker is current at exit, not the one at defer-time — see reschedule below
+
+	// Independent of the (locally or remotely configurable) sync
+	// interval, so a config change pushed from Memory's web UI feels
+	// responsive even if sync itself runs rarely — see checkin.go.
+	checkInTicker := time.NewTicker(CheckInInterval)
+	defer checkInTicker.Stop()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	log.Printf("receptor-daemon running: %d folder(s), syncing every %d minutes", len(engines), cfg.SyncIntervalMinutes)
+	log.Printf("receptor-daemon running: %d folder(s), syncing every %d minutes, checking in every %s", len(engines), cfg.SyncIntervalMinutes, CheckInInterval)
 	for {
 		select {
-		case <-ticker.C:
+		case <-syncTicker.C:
 			runOnce()
+		case <-checkInTicker.C:
+			foldersChanged, intervalChanged := checkIn(ctx, client, &cfg, configPath)
+			if foldersChanged {
+				engines = buildEngines(cfg, stateDir, client, activityLog)
+				if len(engines) == 0 {
+					log.Println("no folders configured — run `receptor-daemon folders add <path>`")
+				}
+			}
+			if intervalChanged {
+				syncTicker.Stop()
+				syncTicker = time.NewTicker(time.Duration(cfg.SyncIntervalMinutes) * time.Minute)
+			}
 		case sig := <-sigCh:
 			log.Printf("received %s, shutting down", sig)
 			return nil
