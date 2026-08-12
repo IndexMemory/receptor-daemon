@@ -210,11 +210,21 @@ type CheckInResult struct {
 // out-of-date daemons in the Integrations UI. It's not part of
 // RemoteConfig itself since it's never something an admin edit sets;
 // it only ever flows daemon → Memory.
-func (c *MemoryClient) CheckIn(ctx context.Context, current RemoteConfig, version string) (CheckInResult, error) {
+//
+// updateError, if non-empty, reports that the *previous* check-in's
+// remote-update attempt failed (see internal/daemon/checkin.go's
+// applyRemoteUpdate) — surfaced in Memory's UI instead of leaving an
+// admin staring at a permanently-stuck "Updating" spinner with no idea
+// anything's wrong. The daemon keeps retrying every cycle regardless
+// (e.g. a permission error blocking a remote update might get fixed by
+// a human running `sudo receptor-daemon update` themselves, at which
+// point the next check-in's report naturally clears this).
+func (c *MemoryClient) CheckIn(ctx context.Context, current RemoteConfig, version, updateError string) (CheckInResult, error) {
 	body, err := json.Marshal(struct {
 		RemoteConfig
 		DaemonVersion string `json:"daemon_version"`
-	}{RemoteConfig: current, DaemonVersion: version})
+		UpdateError   string `json:"update_error,omitempty"`
+	}{RemoteConfig: current, DaemonVersion: version, UpdateError: updateError})
 	if err != nil {
 		return CheckInResult{}, err
 	}

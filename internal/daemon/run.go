@@ -151,6 +151,11 @@ func Run(ctx context.Context, cfg config.Config, configPath string, version stri
 	// locally just to avoid hitting disk on every single successful
 	// check-in forever, not only the first.
 	updateConfirmed := false
+	// A remote-update failure can only be reported one check-in after it
+	// happens (see checkIn's doc comment) — carried across loop
+	// iterations here, cleared (empty string) once whatever's currently
+	// pending resolves one way or another.
+	var lastUpdateError string
 
 	log.Printf("receptor-daemon running: %d folder(s), syncing every %d minutes, checking in every %s", len(engines), cfg.SyncIntervalMinutes, CheckInInterval)
 	for {
@@ -158,7 +163,8 @@ func Run(ctx context.Context, cfg config.Config, configPath string, version stri
 		case <-syncTicker.C:
 			runOnce()
 		case <-checkInTicker.C:
-			foldersChanged, intervalChanged, ok := checkIn(ctx, client, &cfg, configPath, version)
+			foldersChanged, intervalChanged, ok, updateError := checkIn(ctx, client, &cfg, configPath, version, lastUpdateError)
+			lastUpdateError = updateError
 			if ok && !updateConfirmed {
 				if err := clearUpdateState(configPath); err != nil {
 					log.Printf("could not clear update-rollback state: %v", err)

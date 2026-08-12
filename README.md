@@ -45,6 +45,24 @@ chmod +x receptor-daemon-linux-amd64   # or -linux-arm64 / -darwin-amd64 / -darw
 mv receptor-daemon-linux-amd64 /usr/local/bin/receptor-daemon
 ```
 
+**Tradeoff worth knowing about**: `/usr/local/bin` needs root to write to, so
+every future update — `receptor-daemon update`, and any admin-triggered
+remote update from Memory (see "Updating" below) — will need `sudo` too.
+That's fine for the *local* command (just prefix it), but a remote
+update has no terminal to prompt for a password on: it runs as
+whatever user the background service itself runs as, which for the
+default per-user install is *not* root. A remote-triggered update to a
+binary installed at `/usr/local/bin` will therefore always fail with a
+permission error — the daemon reports this back to Memory's UI (rather
+than failing silently) and keeps retrying, but it can never succeed on
+its own; someone has to run `sudo receptor-daemon update` by hand.
+
+If you want remote updates to actually work unattended, install
+somewhere your own user already owns instead — e.g. `~/.local/bin`
+(add it to your `PATH` if it isn't already) — and skip `sudo` in the
+`mv` above. Same daemon, same everything else; just a location the
+per-user background service can write to itself.
+
 ## Usage
 
 Easiest path: just run `receptor-daemon` with no arguments. On first run
@@ -243,6 +261,18 @@ Confirmation works by detecting that the daemon's reported version
 daemon installs whatever is actually latest at that moment (same as
 running `receptor-daemon update` locally would), and the request still
 confirms cleanly instead of getting stuck.
+
+If applying the update fails (most commonly: a permission error,
+because the binary lives somewhere only root can write to but the
+background service runs as a normal user — see the install-location
+tradeoff under "Installing" above), the *next* check-in reports that
+failure back — it can only be reported one cycle after it happens,
+since it's a consequence of processing the previous check-in's
+response. Memory's UI shows this ("Update failed — retrying") instead
+of leaving an admin staring at a spinner that can never resolve on its
+own. The daemon keeps retrying every cycle regardless, in case someone
+fixes the underlying issue (e.g. runs `sudo receptor-daemon update` by
+hand once).
 
 #### Automatic rollback
 

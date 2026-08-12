@@ -182,6 +182,7 @@ func TestCheckInSendsCurrentConfigAndParsesNoUpdateResponse(t *testing.T) {
 		var got struct {
 			RemoteConfig
 			DaemonVersion string `json:"daemon_version"`
+			UpdateError   string `json:"update_error"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatal(err)
@@ -192,13 +193,16 @@ func TestCheckInSendsCurrentConfigAndParsesNoUpdateResponse(t *testing.T) {
 		if got.DaemonVersion != "v1.2.3" {
 			t.Errorf("expected daemon_version %q, got %q", "v1.2.3", got.DaemonVersion)
 		}
+		if got.UpdateError != "permission denied writing binary" {
+			t.Errorf("expected update_error %q, got %q", "permission denied writing binary", got.UpdateError)
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true,"needs_update":false,"config":null,"version":3}`))
 	}))
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	result, err := client.CheckIn(context.Background(), current, "v1.2.3")
+	result, err := client.CheckIn(context.Background(), current, "v1.2.3", "permission denied writing binary")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +225,7 @@ func TestCheckInParsesNeedsUpdateResponseWithConfig(t *testing.T) {
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.3.0")
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.3.0", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +251,7 @@ func TestCheckInParsesRotateAPIKeyResponse(t *testing.T) {
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.3.0")
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.3.0", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +268,7 @@ func TestCheckInLeavesRotateAPIKeyNilWhenAbsent(t *testing.T) {
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.3.0")
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.3.0", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +369,7 @@ func TestCheckInParsesUpdateToVersionResponse(t *testing.T) {
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.4.0")
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.4.0", "")
 	if err != nil {
 		t.Fatal(err)
 	}

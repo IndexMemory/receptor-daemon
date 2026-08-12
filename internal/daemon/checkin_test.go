@@ -139,7 +139,7 @@ func TestCheckInAppliesUpdateWhenServerRequestsOne(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_test")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
 
-	foldersChanged, intervalChanged, _ := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
+	foldersChanged, intervalChanged, _, _ := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test", "")
 	if !foldersChanged || !intervalChanged {
 		t.Fatalf("expected both changed, got foldersChanged=%v intervalChanged=%v", foldersChanged, intervalChanged)
 	}
@@ -161,7 +161,7 @@ func TestCheckInAppliesRotatedAPIKey(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_old")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_old", SyncIntervalMinutes: 15}
 
-	checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
+	checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test", "")
 
 	if cfg.APIKey != "mem_rotated" {
 		t.Fatalf("expected cfg.APIKey rotated, got %q", cfg.APIKey)
@@ -194,7 +194,7 @@ func TestCheckInIsNoOpWhenServerReportsNoUpdate(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_test")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
 
-	foldersChanged, intervalChanged, ok := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
+	foldersChanged, intervalChanged, ok, _ := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test", "")
 	if foldersChanged || intervalChanged {
 		t.Fatalf("expected no changes, got foldersChanged=%v intervalChanged=%v", foldersChanged, intervalChanged)
 	}
@@ -217,11 +217,68 @@ func TestCheckInToleratesNetworkFailure(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_test")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
 
-	foldersChanged, intervalChanged, ok := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
+	foldersChanged, intervalChanged, ok, _ := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test", "")
 	if foldersChanged || intervalChanged {
 		t.Fatal("expected a network failure to be tolerated (logged, not applied), not treated as a change")
 	}
 	if ok {
 		t.Fatal("expected ok=false — the check-in call itself failed")
+	}
+}
+
+func TestCheckInReturnsUpdateErrorWhenRemoteUpdateFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configPath := filepath.Join(t.TempDir(), "config.json")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/receptor-checkin":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true,"needs_update":false,"config":null,"version":1,"update_to_version":"v0.5.0"}`))
+		case "/api/receptor-daemon/download":
+			// Simulates the real failure mode this feature exists for: a
+			// permission error (or any other download/install failure).
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"ok":false,"error":"permission denied"}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := core.NewMemoryClient(srv.URL, "mem_test")
+	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
+
+	_, _, ok, updateError := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test", "")
+	if !ok {
+		t.Fatal("expected ok=true — the check-in call itself succeeded, only the update application failed")
+	}
+	if updateError == "" {
+		t.Fatal("expected a non-empty updateError to report back on the next check-in")
+	}
+}
+
+func TestCheckInSendsPreviousUpdateErrorInNextRequest(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configPath := filepath.Join(t.TempDir(), "config.json")
+
+	var gotUpdateError string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			UpdateError string `json:"update_error"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotUpdateError = body.UpdateError
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"needs_update":false,"config":null,"version":1}`))
+	}))
+	defer srv.Close()
+
+	client := core.NewMemoryClient(srv.URL, "mem_test")
+	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
+
+	checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test", "download failed: permission denied")
+	if gotUpdateError != "download failed: permission denied" {
+		t.Fatalf("expected the previous cycle's error reported in this request, got %q", gotUpdateError)
 	}
 }

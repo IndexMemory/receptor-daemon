@@ -109,11 +109,18 @@ func applyAPIKeyRotation(newKey string, client *core.MemoryClient, cfg *config.C
 // binary can actually talk to Memory" signal that clears a pending
 // update's rollback state (see rollback.go): a real, already-exercised
 // end-to-end smoke test, not just "the process is still alive."
-func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config, configPath string, version string) (foldersChanged, intervalChanged, ok bool) {
-	result, err := client.CheckIn(ctx, remoteConfigFromLocal(*cfg), version)
+//
+// lastUpdateError is this cycle's report of the *previous* cycle's
+// remote-update attempt (empty if there wasn't one, or it succeeded);
+// updateError is what this cycle's own attempt produces, to be passed
+// back in as lastUpdateError on the *next* call — a failure can only
+// ever be reported one check-in after it happens, since it's a
+// consequence of processing this call's response. See applyRemoteUpdate.
+func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config, configPath, version, lastUpdateError string) (foldersChanged, intervalChanged, ok bool, updateError string) {
+	result, err := client.CheckIn(ctx, remoteConfigFromLocal(*cfg), version, lastUpdateError)
 	if err != nil {
 		log.Printf("check-in failed: %v", err)
-		return false, false, false
+		return false, false, false, lastUpdateError
 	}
 
 	if result.RotateAPIKey != nil && *result.RotateAPIKey != "" {
@@ -139,33 +146,41 @@ func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config,
 	// disk (it has — applyRemoteConfig/applyAPIKeyRotation both save
 	// before returning) before this can safely end the loop.
 	if result.UpdateToVersion != nil {
-		applyRemoteUpdate(ctx, client, configPath)
+		updateError = applyRemoteUpdate(ctx, client, configPath)
 	}
 
-	return foldersChanged, intervalChanged, true
+	return foldersChanged, intervalChanged, true, updateError
 }
 
 // applyRemoteUpdate handles an admin-triggered remote update request —
 // same download-verify-swap-restart path as `receptor-daemon update`
 // (see ApplyDaemonUpdate), just invoked from the check-in loop instead
-// of someone typing the command. Errors are logged and swallowed like
-// everything else in checkIn: Memory will just keep asking on every
-// future check-in until a report shows the version actually changed.
-func applyRemoteUpdate(ctx context.Context, client *core.MemoryClient, configPath string) {
+// of someone typing the command. Returns a non-empty error message on
+// failure, reported on the *next* check-in (see checkIn's doc comment)
+// so Memory's UI shows what actually went wrong instead of a
+// permanently-stuck "Updating" spinner. The daemon keeps retrying every
+// cycle regardless — e.g. a permission error (the binary living
+// somewhere only root can write to, but this service running as a
+// normal user — see the README's "Installing" section) might get fixed
+// by a human running `sudo receptor-daemon update` themselves, at which
+// point the next report naturally clears this.
+func applyRemoteUpdate(ctx context.Context, client *core.MemoryClient, configPath string) string {
 	opts, err := service.ResolveOptions(configPath, false)
 	if err != nil {
-		log.Printf("check-in: could not resolve binary path for remote update: %v", err)
-		return
+		msg := fmt.Sprintf("could not resolve binary path for remote update: %v", err)
+		log.Printf("check-in: %s", msg)
+		return msg
 	}
 	log.Println("check-in: applying a remotely-triggered update")
 	outcome, err := ApplyDaemonUpdate(ctx, client, opts.BinaryPath, configPath)
 	if err != nil {
 		log.Printf("check-in: remote update failed: %v", err)
-		return
+		return err.Error()
 	}
 	if outcome.ServiceRestarted {
 		log.Printf("check-in: updated to %s and restarted the service", outcome.NewVersion)
 	} else {
 		log.Printf("check-in: updated to %s — no service installed, restart `receptor-daemon run` manually", outcome.NewVersion)
 	}
+	return ""
 }
