@@ -94,8 +94,11 @@ func SyncOnce(ctx context.Context, cfg config.Config, configPath string) error {
 
 // Run starts the foreground sync loop: an immediate sync on start, then a
 // periodic timer, until SIGINT/SIGTERM. This is what `receptor-daemon run`
-// (and the systemd/launchd service unit) executes.
-func Run(ctx context.Context, cfg config.Config, configPath string) error {
+// (and the systemd/launchd service unit) executes. version is the build's
+// `main.version` (see cmd/receptor-daemon/main.go), reported on every
+// check-in purely as telemetry — Memory uses it to flag out-of-date
+// daemons in the Integrations UI, nothing here acts on it.
+func Run(ctx context.Context, cfg config.Config, configPath string, version string) error {
 	if cfg.APIKey == "" || cfg.ServerURL == "" {
 		return fmt.Errorf("not configured — run `receptor-daemon init` first")
 	}
@@ -136,7 +139,7 @@ func Run(ctx context.Context, cfg config.Config, configPath string) error {
 		case <-syncTicker.C:
 			runOnce()
 		case <-checkInTicker.C:
-			foldersChanged, intervalChanged := checkIn(ctx, client, &cfg, configPath)
+			foldersChanged, intervalChanged := checkIn(ctx, client, &cfg, configPath, version)
 			if foldersChanged {
 				engines = buildEngines(cfg, stateDir, client, activityLog)
 				if len(engines) == 0 {

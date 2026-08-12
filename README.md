@@ -176,6 +176,71 @@ be running to notice a later "enable" — a one-way trap with no remote
 recovery. Revoking the API key remains the right remote lever if you
 need to stop trusting a given machine.
 
+Every check-in also reports this build's own version (`main.version`,
+the same string `--version` prints) purely as telemetry — Memory
+compares it against the latest published release and flags out-of-date
+daemons in the Integrations page. Nothing here acts on that report on
+its own; see `receptor-daemon update` below for what actually applies it.
+
+### Updating
+
+```sh
+receptor-daemon update
+```
+
+Downloads the latest release and installs it. It:
+
+1. Asks Memory what the latest version is (`GET
+   /api/receptor-daemon/latest-version`) and exits immediately if
+   you're already on it.
+2. Downloads the matching platform's binary **through Memory**
+   (`GET /api/receptor-daemon/download`), not directly from GitHub —
+   this daemon is built to only ever need outbound access to its own
+   Memory server (works behind NAT/restrictive firewalls by design), so
+   updates shouldn't quietly add a second one. Memory itself fetches
+   from GitHub and verifies the binary against a `checksums.txt`
+   published alongside each release before ever serving it onward; this
+   daemon independently re-verifies the SHA256 it receives too, as a
+   second check against transport corruption between Memory and here —
+   a mismatch at either stage aborts before anything is installed.
+3. Writes the verified binary next to the current one and atomically
+   renames it into place (same filesystem, so this can't leave a
+   half-written executable behind even if interrupted).
+4. Restarts the background service if one is installed
+   (`receptor-daemon start` set one up), so the new version takes effect
+   immediately; otherwise just tells you to restart `receptor-daemon
+   run` yourself.
+
+If the binary is installed somewhere you don't own (e.g. a `--system`
+install), you'll need `sudo receptor-daemon update` — same as any other
+operation that touches a system-wide install.
+
+#### Triggered remotely from Memory
+
+Clicking "Update now" on a receptor key in Memory's Integrations page
+(shown once that daemon's reported version falls behind the latest
+release) stages a target version, delivered via the *next* check-in
+response — same as remote config changes and API key rotation. The
+daemon then runs the exact same download-verify-swap-restart steps
+above (`internal/daemon.ApplyDaemonUpdate`, shared code with the CLI
+command), just triggered by a check-in response instead of someone
+typing the command.
+
+Confirmation works by detecting that the daemon's reported version
+*changed* since the request, not by matching a specific target exactly
+— if an even newer release lands while the request is in flight, the
+daemon installs whatever is actually latest at that moment (same as
+running `receptor-daemon update` locally would), and the request still
+confirms cleanly instead of getting stuck.
+
+This is deliberately the simplest possible version of a remote trigger:
+one machine at a time (there's no bulk "update the whole team" button),
+no staged/percentage rollout, and no automatic rollback if a release
+turns out to be bad — a failed update is logged and retried on the next
+check-in, but a *bad* one that installs and runs poorly isn't detected
+or reverted. Fleet-wide staged rollout with automatic rollback is a
+deliberately separate, later phase.
+
 ### Rotating an API key
 
 Clicking "Rotate API key" on a receptor key in Memory's Integrations page
@@ -346,9 +411,16 @@ like Multipass, which default to arm64 guests on ARM hosts.
   remotely settable (see "Remote configuration from Memory" above): it's
   a local decision via `receptor-daemon start`/`stop`, reported to
   Memory as read-only status. `server_url` is likewise never remotely
-  settable, rotation included (see "Rotating an API key" above). Remote
-  binary/version updates remain explicitly out of scope — that needs
-  checksum/signature verification before executing a downloaded binary.
+  settable, rotation included (see "Rotating an API key" above).
+- **Remote updates are one-machine-at-a-time, with no rollback.** An
+  admin can trigger a checksum-verified update per receptor key from
+  Memory's Integrations page (see "Triggered remotely from Memory"
+  above), but there's no bulk/fleet-wide trigger, no staged or
+  percentage rollout, and no automatic revert if an installed release
+  turns out to run poorly — only a failed *download or install* is
+  retried automatically, not a bad-but-successfully-installed one.
+  Staged rollout + rollback is a deliberately separate, larger phase
+  not built yet.
 - **No package manager distribution** — no `.deb`, no Homebrew formula
   yet. Ships as a plain binary via GitHub Releases, same tradeoff already
   made for the other two Receptor apps.

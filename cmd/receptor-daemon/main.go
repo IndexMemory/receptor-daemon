@@ -58,6 +58,8 @@ func main() {
 		err = cmdStart(args)
 	case "stop":
 		err = cmdStop(args)
+	case "update":
+		err = cmdUpdate(args)
 	case "-v", "--version", "version":
 		fmt.Println("receptor-daemon " + version)
 		return
@@ -109,6 +111,13 @@ Usage:
                                                   never need it
   receptor-daemon stop [--system]                stops the background service
                                                   (config is untouched)
+  receptor-daemon update                         downloads and installs the
+                                                  latest release (through
+                                                  Memory, checksum-verified),
+                                                  then restarts the background
+                                                  service if one is running —
+                                                  a no-op if already up to
+                                                  date
   receptor-daemon --version                      print the build version —
                                                   check this if something
                                                   documented here seems missing,
@@ -716,7 +725,7 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	return daemon.Run(context.Background(), cfg, *configPath)
+	return daemon.Run(context.Background(), cfg, *configPath, version)
 }
 
 // MARK: - start / stop
@@ -768,5 +777,64 @@ func cmdStop(args []string) error {
 		return err
 	}
 	fmt.Println("stopped the receptor-daemon service")
+	return nil
+}
+
+// MARK: - update
+//
+// Downloads the latest release binary through Memory (never directly
+// from GitHub — see DownloadDaemonBinary's doc comment) and swaps it in
+// via an atomic rename, then restarts the background service if one is
+// installed so the new binary actually takes effect. A manual,
+// opt-in-per-machine trigger — nothing here runs unless someone types
+// `receptor-daemon update` themselves.
+
+func cmdUpdate(args []string) error {
+	fs := flag.NewFlagSet("update", flag.ExitOnError)
+	configPath := addConfigFlag(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg.APIKey == "" || cfg.ServerURL == "" {
+		return fmt.Errorf("not configured — run `receptor-daemon init` first")
+	}
+
+	client := core.NewMemoryClient(cfg.ServerURL, cfg.APIKey)
+	ctx := context.Background()
+
+	latest, err := client.LatestDaemonVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("checking for updates: %w", err)
+	}
+	if latest == "" {
+		return fmt.Errorf("Memory doesn't know the latest receptor-daemon version yet — try again shortly")
+	}
+	if latest == version {
+		fmt.Printf("already up to date (%s)\n", version)
+		return nil
+	}
+	fmt.Printf("downloading %s (currently running %s)...\n", latest, version)
+
+	// Resolves to the current binary's real, symlink-free path — writing
+	// the replacement alongside it (same directory) so the final rename
+	// is atomic (same filesystem), not a copy across volumes.
+	opts, err := service.ResolveOptions(*configPath, false)
+	if err != nil {
+		return err
+	}
+	outcome, err := daemon.ApplyDaemonUpdate(ctx, client, opts.BinaryPath, *configPath)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("updated to %s (sha256 %s)\n", outcome.NewVersion, outcome.SHA256)
+	if outcome.ServiceRestarted {
+		fmt.Println("restarted the background service")
+	} else {
+		fmt.Println("not running as a background service — restart `receptor-daemon run` to use the new version")
+	}
 	return nil
 }

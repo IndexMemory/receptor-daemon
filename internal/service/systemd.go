@@ -126,6 +126,20 @@ func Status() (installed bool, system bool, err error) {
 	return false, false, nil
 }
 
+// Restart force-restarts an already-installed service — used by
+// `receptor-daemon update` after swapping in a new binary, so the new
+// version actually takes effect rather than sitting on disk unused by
+// the still-running old process.
+func Restart(opts Options) error {
+	if err := guardAgainstRootPerUserInstall(opts); err != nil {
+		return err
+	}
+	if err := runSystemctl(opts.System, "restart", systemdUnitName); err != nil {
+		return fmt.Errorf("systemctl restart: %w", err)
+	}
+	return nil
+}
+
 // Uninstall stops, disables, and removes the systemd unit file.
 func Uninstall(opts Options) error {
 	if err := guardAgainstRootPerUserInstall(opts); err != nil {

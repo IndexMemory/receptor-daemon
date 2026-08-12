@@ -58,6 +58,15 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # Memory's /api/receptor-daemon/download proxy (see lib/receptor_daemon_releases.ts
+      # in the memory repo) verifies a downloaded binary against this before
+      # ever serving it to a daemon running `receptor-daemon update` — the
+      # whole point of routing updates through Memory instead of daemons
+      # fetching straight from GitHub themselves.
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum receptor-daemon-* > checksums.txt
+
       - name: Create release
         run: |
           gh release create "${{ github.ref_name }}" \
@@ -66,6 +75,7 @@ jobs:
             dist/receptor-daemon-linux-arm64 \
             dist/receptor-daemon-darwin-amd64 \
             dist/receptor-daemon-darwin-arm64 \
+            dist/checksums.txt \
             --title "${{ github.ref_name }}" \
             --notes "Receptor Daemon ${{ github.ref_name }} — see README.md for install/run instructions."
         env:

@@ -112,6 +112,23 @@ func Install(opts Options) error {
 	return nil
 }
 
+// Restart force-restarts an already-installed service — used by
+// `receptor-daemon update` after swapping in a new binary, so the new
+// version actually takes effect rather than sitting on disk unused by
+// the still-running old process. Same kickstart -k Install() uses to
+// force-start, which works regardless of whether the job was already
+// running.
+func Restart(opts Options) error {
+	if err := guardAgainstRootPerUserInstall(opts); err != nil {
+		return err
+	}
+	target := domainTarget(opts.System) + "/" + launchdLabel
+	if err := runLaunchctl("kickstart", "-k", target); err != nil {
+		return fmt.Errorf("launchctl kickstart: %w", err)
+	}
+	return nil
+}
+
 // Uninstall stops (bootout) and removes the launchd plist.
 func Uninstall(opts Options) error {
 	if err := guardAgainstRootPerUserInstall(opts); err != nil {

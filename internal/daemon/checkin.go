@@ -97,13 +97,14 @@ func applyAPIKeyRotation(newKey string, client *core.MemoryClient, cfg *config.C
 }
 
 // checkIn reports the daemon's current config to Memory and applies any
-// pending remote change — a config edit, a key rotation, or both in the
-// same response, independently of one another. Best-effort: network/parse
-// errors are logged and skipped, the same tolerance the sync loop already
-// has for a single bad cycle — never fatal to the daemon, there's always
-// another check-in a minute later.
-func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config, configPath string) (foldersChanged, intervalChanged bool) {
-	result, err := client.CheckIn(ctx, remoteConfigFromLocal(*cfg))
+// pending remote change — a config edit, a key rotation, a binary
+// update, or any combination in the same response, independently of one
+// another. Best-effort: network/parse errors are logged and skipped, the
+// same tolerance the sync loop already has for a single bad cycle —
+// never fatal to the daemon, there's always another check-in a minute
+// later.
+func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config, configPath string, version string) (foldersChanged, intervalChanged bool) {
+	result, err := client.CheckIn(ctx, remoteConfigFromLocal(*cfg), version)
 	if err != nil {
 		log.Printf("check-in failed: %v", err)
 		return false, false
@@ -117,14 +118,48 @@ func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config,
 		}
 	}
 
-	if !result.NeedsUpdate || result.Config == nil {
-		return false, false
+	if result.NeedsUpdate && result.Config != nil {
+		fc, ic, err := applyRemoteConfig(*result.Config, cfg, configPath)
+		if err != nil {
+			log.Printf("check-in: applying remote config failed: %v", err)
+		} else {
+			log.Println("check-in: applied a remotely-pushed config change")
+			foldersChanged, intervalChanged = fc, ic
+		}
 	}
-	fc, ic, err := applyRemoteConfig(*result.Config, cfg, configPath)
+
+	// Applied last, deliberately: a service restart kills this very
+	// process, so anything above needs to have already been persisted to
+	// disk (it has — applyRemoteConfig/applyAPIKeyRotation both save
+	// before returning) before this can safely end the loop.
+	if result.UpdateToVersion != nil {
+		applyRemoteUpdate(ctx, client, configPath)
+	}
+
+	return foldersChanged, intervalChanged
+}
+
+// applyRemoteUpdate handles an admin-triggered remote update request —
+// same download-verify-swap-restart path as `receptor-daemon update`
+// (see ApplyDaemonUpdate), just invoked from the check-in loop instead
+// of someone typing the command. Errors are logged and swallowed like
+// everything else in checkIn: Memory will just keep asking on every
+// future check-in until a report shows the version actually changed.
+func applyRemoteUpdate(ctx context.Context, client *core.MemoryClient, configPath string) {
+	opts, err := service.ResolveOptions(configPath, false)
 	if err != nil {
-		log.Printf("check-in: applying remote config failed: %v", err)
-		return false, false
+		log.Printf("check-in: could not resolve binary path for remote update: %v", err)
+		return
 	}
-	log.Println("check-in: applied a remotely-pushed config change")
-	return fc, ic
+	log.Println("check-in: applying a remotely-triggered update")
+	outcome, err := ApplyDaemonUpdate(ctx, client, opts.BinaryPath, configPath)
+	if err != nil {
+		log.Printf("check-in: remote update failed: %v", err)
+		return
+	}
+	if outcome.ServiceRestarted {
+		log.Printf("check-in: updated to %s and restarted the service", outcome.NewVersion)
+	} else {
+		log.Printf("check-in: updated to %s — no service installed, restart `receptor-daemon run` manually", outcome.NewVersion)
+	}
 }

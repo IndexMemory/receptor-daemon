@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -177,12 +179,18 @@ func TestCheckInSendsCurrentConfigAndParsesNoUpdateResponse(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer mem_test" {
 			t.Errorf("unexpected Authorization header: %q", got)
 		}
-		var got RemoteConfig
+		var got struct {
+			RemoteConfig
+			DaemonVersion string `json:"daemon_version"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatal(err)
 		}
 		if got.SyncIntervalMinutes != 15 || len(got.Folders) != 1 || got.Folders[0].Path != "/srv/docs" || !got.BootStartEnabled {
 			t.Errorf("unexpected reported config: %+v", got)
+		}
+		if got.DaemonVersion != "v1.2.3" {
+			t.Errorf("expected daemon_version %q, got %q", "v1.2.3", got.DaemonVersion)
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true,"needs_update":false,"config":null,"version":3}`))
@@ -190,7 +198,7 @@ func TestCheckInSendsCurrentConfigAndParsesNoUpdateResponse(t *testing.T) {
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	result, err := client.CheckIn(context.Background(), current)
+	result, err := client.CheckIn(context.Background(), current, "v1.2.3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +221,7 @@ func TestCheckInParsesNeedsUpdateResponseWithConfig(t *testing.T) {
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15})
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.3.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +247,7 @@ func TestCheckInParsesRotateAPIKeyResponse(t *testing.T) {
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15})
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.3.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,11 +264,112 @@ func TestCheckInLeavesRotateAPIKeyNilWhenAbsent(t *testing.T) {
 	defer srv.Close()
 
 	client := NewMemoryClient(srv.URL, "mem_test")
-	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15})
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.3.0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.RotateAPIKey != nil {
 		t.Fatalf("expected RotateAPIKey nil, got %v", *result.RotateAPIKey)
+	}
+}
+
+func TestLatestDaemonVersionParsesResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/receptor-daemon/latest-version" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer mem_test" {
+			t.Errorf("unexpected Authorization header: %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"latest_version":"v0.4.0"}`))
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	got, err := client.LatestDaemonVersion(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "v0.4.0" {
+		t.Fatalf("expected %q, got %q", "v0.4.0", got)
+	}
+}
+
+func TestLatestDaemonVersionHandlesNullVersion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"latest_version":null}`))
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	got, err := client.LatestDaemonVersion(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("expected empty string for an unknown latest version, got %q", got)
+	}
+}
+
+func TestDownloadDaemonBinaryAcceptsMatchingChecksum(t *testing.T) {
+	payload := []byte("fake receptor-daemon binary contents")
+	sum := sha256.Sum256(payload)
+	expected := hex.EncodeToString(sum[:])
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/receptor-daemon/download" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("os") != "linux" || r.URL.Query().Get("arch") != "amd64" {
+			t.Errorf("unexpected query: %s", r.URL.RawQuery)
+		}
+		w.Header().Set("X-Receptor-Daemon-Version", "v0.4.0")
+		w.Header().Set("X-Receptor-Daemon-Sha256", expected)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	binary, err := client.DownloadDaemonBinary(context.Background(), "linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binary.Version != "v0.4.0" || binary.SHA256 != expected || string(binary.Bytes) != string(payload) {
+		t.Fatalf("unexpected binary: %+v", binary)
+	}
+}
+
+func TestDownloadDaemonBinaryRejectsChecksumMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Receptor-Daemon-Version", "v0.4.0")
+		w.Header().Set("X-Receptor-Daemon-Sha256", "0000000000000000000000000000000000000000000000000000000000000000")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("tampered or corrupted bytes"))
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	if _, err := client.DownloadDaemonBinary(context.Background(), "linux", "amd64"); err == nil {
+		t.Fatal("expected a checksum mismatch error")
+	}
+}
+
+func TestCheckInParsesUpdateToVersionResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"needs_update":false,"config":null,"version":1,"update_to_version":"v0.5.0"}`))
+	}))
+	defer srv.Close()
+
+	client := NewMemoryClient(srv.URL, "mem_test")
+	result, err := client.CheckIn(context.Background(), RemoteConfig{SyncIntervalMinutes: 15}, "v0.4.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.UpdateToVersion == nil || *result.UpdateToVersion != "v0.5.0" {
+		t.Fatalf("expected UpdateToVersion %q, got %v", "v0.5.0", result.UpdateToVersion)
 	}
 }

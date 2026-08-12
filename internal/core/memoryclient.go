@@ -3,6 +3,8 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -187,6 +189,13 @@ type CheckInResult struct {
 	// all future requests, including its next check-in. See
 	// internal/daemon/checkin.go's applyAPIKeyRotation.
 	RotateAPIKey *string
+	// UpdateToVersion is non-nil when an admin has remotely triggered an
+	// update for this key: the daemon should download and install the
+	// latest release via DownloadDaemonBinary (same path as
+	// `receptor-daemon update`) and restart. Informational string only —
+	// see applyReceptorCheckin in Memory's lib/api_keys.ts, the daemon
+	// always installs whatever is actually latest at apply time.
+	UpdateToVersion *string
 }
 
 // CheckIn reports the daemon's currently-running config to Memory and
@@ -195,8 +204,17 @@ type CheckInResult struct {
 // compare-and-swap on version means a stale in-flight check-in can't
 // stomp a newer admin edit — worst case, this daemon just sees
 // NeedsUpdate again on its next check-in a minute later.
-func (c *MemoryClient) CheckIn(ctx context.Context, current RemoteConfig) (CheckInResult, error) {
-	body, err := json.Marshal(current)
+//
+// version is this build's own version string (main.version), reported
+// alongside the config purely as telemetry — Memory uses it to flag
+// out-of-date daemons in the Integrations UI. It's not part of
+// RemoteConfig itself since it's never something an admin edit sets;
+// it only ever flows daemon → Memory.
+func (c *MemoryClient) CheckIn(ctx context.Context, current RemoteConfig, version string) (CheckInResult, error) {
+	body, err := json.Marshal(struct {
+		RemoteConfig
+		DaemonVersion string `json:"daemon_version"`
+	}{RemoteConfig: current, DaemonVersion: version})
 	if err != nil {
 		return CheckInResult{}, err
 	}
@@ -219,21 +237,118 @@ func (c *MemoryClient) CheckIn(ctx context.Context, current RemoteConfig) (Check
 	}
 
 	var decoded struct {
-		OK           bool          `json:"ok"`
-		NeedsUpdate  bool          `json:"needs_update"`
-		Config       *RemoteConfig `json:"config"`
-		Version      int           `json:"version"`
-		RotateAPIKey *string       `json:"rotate_api_key"`
+		OK              bool          `json:"ok"`
+		NeedsUpdate     bool          `json:"needs_update"`
+		Config          *RemoteConfig `json:"config"`
+		Version         int           `json:"version"`
+		RotateAPIKey    *string       `json:"rotate_api_key"`
+		UpdateToVersion *string       `json:"update_to_version"`
 	}
 	if err := json.Unmarshal(respBody, &decoded); err != nil {
 		return CheckInResult{}, fmt.Errorf("failed to decode server response: %w", err)
 	}
 	return CheckInResult{
-		NeedsUpdate:  decoded.NeedsUpdate,
-		Config:       decoded.Config,
-		Version:      decoded.Version,
-		RotateAPIKey: decoded.RotateAPIKey,
+		NeedsUpdate:     decoded.NeedsUpdate,
+		Config:          decoded.Config,
+		Version:         decoded.Version,
+		RotateAPIKey:    decoded.RotateAPIKey,
+		UpdateToVersion: decoded.UpdateToVersion,
 	}, nil
+}
+
+// MaxBinaryBytes caps how much a single `receptor-daemon update` download
+// will accept, purely defensive — real release binaries are a few tens of
+// MB, so anything past this points at a bug or a misbehaving server, not
+// a legitimate release.
+const MaxBinaryBytes = 200 * 1024 * 1024
+
+// LatestDaemonVersion asks Memory what the newest published
+// receptor-daemon release is — see GET /api/receptor-daemon/latest-version
+// (lib/receptor_daemon_releases.ts). Empty string if Memory doesn't know
+// yet (e.g. its own GitHub lookup hasn't succeeded).
+func (c *MemoryClient) LatestDaemonVersion(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, joinURL(c.BaseURL, "api/receptor-daemon/latest-version"), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", &HTTPError{StatusCode: resp.StatusCode, Body: string(respBody)}
+	}
+
+	var decoded struct {
+		LatestVersion *string `json:"latest_version"`
+	}
+	if err := json.Unmarshal(respBody, &decoded); err != nil {
+		return "", fmt.Errorf("failed to decode server response: %w", err)
+	}
+	if decoded.LatestVersion == nil {
+		return "", nil
+	}
+	return *decoded.LatestVersion, nil
+}
+
+// DaemonBinary is a downloaded, already-checksum-verified receptor-daemon
+// release binary, ready to be written to disk.
+type DaemonBinary struct {
+	Version string
+	SHA256  string
+	Bytes   []byte
+}
+
+// DownloadDaemonBinary fetches the latest receptor-daemon release binary
+// for the given platform through Memory (never directly from GitHub —
+// see "Rotating an API key"-style reasoning in the README: this daemon
+// only ever needs outbound access to its own Memory server, not to
+// github.com too). Memory has already verified the binary against
+// GitHub's published checksums.txt before serving it; SHA256 here is a
+// second, independent check against transport corruption between Memory
+// and this daemon, not a substitute for Memory's own verification.
+func (c *MemoryClient) DownloadDaemonBinary(ctx context.Context, goos, goarch string) (DaemonBinary, error) {
+	u := joinURL(c.BaseURL, "api/receptor-daemon/download") + "?os=" + url.QueryEscape(goos) + "&arch=" + url.QueryEscape(goarch)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return DaemonBinary{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return DaemonBinary{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return DaemonBinary{}, &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
+	}
+
+	version := resp.Header.Get("X-Receptor-Daemon-Version")
+	expectedSHA256 := resp.Header.Get("X-Receptor-Daemon-Sha256")
+
+	limited := io.LimitReader(resp.Body, MaxBinaryBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return DaemonBinary{}, fmt.Errorf("downloading binary: %w", err)
+	}
+	if len(data) > MaxBinaryBytes {
+		return DaemonBinary{}, fmt.Errorf("download exceeded the %d-byte cap", MaxBinaryBytes)
+	}
+
+	sum := sha256.Sum256(data)
+	gotSHA256 := hex.EncodeToString(sum[:])
+	if expectedSHA256 != "" && gotSHA256 != expectedSHA256 {
+		return DaemonBinary{}, fmt.Errorf("checksum mismatch: expected %s, got %s — refusing to use this download", expectedSHA256, gotSHA256)
+	}
+
+	return DaemonBinary{Version: version, SHA256: gotSHA256, Bytes: data}, nil
 }
 
 var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")

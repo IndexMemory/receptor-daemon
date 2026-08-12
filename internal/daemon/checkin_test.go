@@ -139,7 +139,7 @@ func TestCheckInAppliesUpdateWhenServerRequestsOne(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_test")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
 
-	foldersChanged, intervalChanged := checkIn(context.Background(), client, &cfg, configPath)
+	foldersChanged, intervalChanged := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
 	if !foldersChanged || !intervalChanged {
 		t.Fatalf("expected both changed, got foldersChanged=%v intervalChanged=%v", foldersChanged, intervalChanged)
 	}
@@ -161,7 +161,7 @@ func TestCheckInAppliesRotatedAPIKey(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_old")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_old", SyncIntervalMinutes: 15}
 
-	checkIn(context.Background(), client, &cfg, configPath)
+	checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
 
 	if cfg.APIKey != "mem_rotated" {
 		t.Fatalf("expected cfg.APIKey rotated, got %q", cfg.APIKey)
@@ -194,7 +194,7 @@ func TestCheckInIsNoOpWhenServerReportsNoUpdate(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_test")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
 
-	foldersChanged, intervalChanged := checkIn(context.Background(), client, &cfg, configPath)
+	foldersChanged, intervalChanged := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
 	if foldersChanged || intervalChanged {
 		t.Fatalf("expected no changes, got foldersChanged=%v intervalChanged=%v", foldersChanged, intervalChanged)
 	}
@@ -214,7 +214,7 @@ func TestCheckInToleratesNetworkFailure(t *testing.T) {
 	client := core.NewMemoryClient(srv.URL, "mem_test")
 	cfg := config.Config{ServerURL: srv.URL, APIKey: "mem_test", SyncIntervalMinutes: 15}
 
-	foldersChanged, intervalChanged := checkIn(context.Background(), client, &cfg, configPath)
+	foldersChanged, intervalChanged := checkIn(context.Background(), client, &cfg, configPath, "v0.3.0-test")
 	if foldersChanged || intervalChanged {
 		t.Fatal("expected a network failure to be tolerated (logged, not applied), not treated as a change")
 	}
