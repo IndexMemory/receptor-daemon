@@ -99,9 +99,16 @@ if [ "$path_already_set" -eq 0 ]; then
   else
     printf '\n# added by receptor-daemon install.sh\n%s\n' "$export_line" >> "$rc_file"
   fi
-  log "added $install_dir to PATH in $rc_file — open a new terminal (or run: . $rc_file), then run:"
-else
-  log "run:"
+fi
+
+log ""
+log "run this to finish setup (server URL, API key, folders):"
+if [ "$path_already_set" -eq 0 ]; then
+  # A script can only ever change PATH for shells started *after* this
+  # one runs — never the shell that's currently piping into it. So this
+  # terminal specifically needs an explicit `.` first; any *new* terminal
+  # opened after this one already has $rc_file's PATH change and can
+  # skip straight to `receptor-daemon`.
+  log "  . $rc_file"
 fi
 log "  receptor-daemon"
-log "to finish setup (server URL, API key, folders)."
