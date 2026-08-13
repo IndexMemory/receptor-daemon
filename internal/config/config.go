@@ -52,9 +52,10 @@ var ErrNotInitialized = errors.New("receptor-daemon is not initialized yet — r
 // in cmd/receptor-daemon.
 //
 // Running as root via sudo (e.g. `sudo receptor-daemon update`, needed
-// whenever the binary lives somewhere root-owned like /usr/local/bin —
-// the documented install location, so this is the common case, not an
-// edge case) resolves for the user who invoked sudo instead of root
+// whenever the binary lives somewhere root-owned — the default install
+// location is a per-user directory that needs no sudo at all, but a
+// shared system location like /usr/local/bin is still supported and
+// does need it) resolves for the user who invoked sudo instead of root
 // itself. Without this, most Linux distributions reset $HOME under
 // sudo, so the default path would silently point at root's own —
 // almost certainly nonexistent — config instead of the real one, and

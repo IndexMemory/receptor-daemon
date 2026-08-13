@@ -15,11 +15,12 @@ const systemdUnitName = "receptor-daemon.service"
 
 // systemdUnitPath resolves the per-user unit path via sudoenv (see its
 // doc comment) rather than os.UserHomeDir() directly — without this, a
-// `sudo receptor-daemon update` (needed whenever the binary lives
-// somewhere root-owned, e.g. /usr/local/bin — the documented install
-// path) would silently look at */root/.config/...* instead of the real
-// unit file, making Status() wrongly report "not installed" and
-// ApplyDaemonUpdate skip restarting the service it just updated.
+// `sudo receptor-daemon update` (needed only if the binary was installed
+// somewhere root-owned, e.g. a shared /usr/local/bin install rather than
+// the default per-user directory) would silently look at
+// */root/.config/...* instead of the real unit file, making Status()
+// wrongly report "not installed" and ApplyDaemonUpdate skip restarting
+// the service it just updated.
 func systemdUnitPath(system bool) (string, error) {
 	return systemdUnitPathForEUID(system, os.Geteuid())
 }

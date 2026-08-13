@@ -38,30 +38,59 @@ enforcement. Mint one from Memory's web UI: **Settings → API Keys**.
 
 Download the latest binary for your platform from the
 [Releases page](https://github.com/IndexMemory/receptor-daemon/releases),
-or build from source (see below). Then:
+or build from source (see below). Install it somewhere your own user
+already owns — `~/.local/bin` — so both local (`receptor-daemon update`)
+and remote-triggered updates from Memory can write the new binary in
+place with no `sudo` needed at all.
+
+### macOS
 
 ```sh
-chmod +x receptor-daemon-linux-amd64   # or -linux-arm64 / -darwin-amd64 / -darwin-arm64
-mv receptor-daemon-linux-amd64 /usr/local/bin/receptor-daemon
+mkdir -p ~/.local/bin
+chmod +x receptor-daemon-darwin-arm64   # or -darwin-amd64 on an Intel Mac
+mv receptor-daemon-darwin-arm64 ~/.local/bin/receptor-daemon
 ```
 
-**Tradeoff worth knowing about**: `/usr/local/bin` needs root to write to, so
-every future update — `receptor-daemon update`, and any admin-triggered
-remote update from Memory (see "Updating" below) — will need `sudo` too.
-That's fine for the *local* command (just prefix it), but a remote
-update has no terminal to prompt for a password on: it runs as
-whatever user the background service itself runs as, which for the
-default per-user install is *not* root. A remote-triggered update to a
-binary installed at `/usr/local/bin` will therefore always fail with a
-permission error — the daemon reports this back to Memory's UI (rather
-than failing silently) and keeps retrying, but it can never succeed on
-its own; someone has to run `sudo receptor-daemon update` by hand.
+macOS has no default `PATH` entry for `~/.local/bin` — add one if
+`receptor-daemon --version` comes back "command not found" after this
+(assuming the default `zsh` shell):
 
-If you want remote updates to actually work unattended, install
-somewhere your own user already owns instead — e.g. `~/.local/bin`
-(add it to your `PATH` if it isn't already) — and skip `sudo` in the
-`mv` above. Same daemon, same everything else; just a location the
-per-user background service can write to itself.
+```sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+### Linux
+
+```sh
+mkdir -p ~/.local/bin
+chmod +x receptor-daemon-linux-amd64   # or -linux-arm64
+mv receptor-daemon-linux-amd64 ~/.local/bin/receptor-daemon
+```
+
+Most distributions (Ubuntu/Debian included) already put `~/.local/bin`
+on `PATH` automatically via the default `~/.profile` if the directory
+exists — no extra setup needed there.
+
+---
+
+`PATH` only affects typing the command interactively, on either OS — the
+background service always execs an absolute path baked in at `start`
+time, so it works regardless of `PATH`.
+
+**Tradeoff worth knowing about a shared system location instead** (e.g.
+`/usr/local/bin`, useful if several accounts on one shared machine should
+all use the same install): that needs `sudo mv` above instead, and every
+future update — `receptor-daemon update`, and any admin-triggered remote
+update from Memory (see "Updating" below) — will need `sudo` too. That's
+fine for the *local* command (just prefix it), but a remote update has no
+terminal to prompt for a password on: it runs as whatever user the
+background service itself runs as, which for the default per-user
+install is *not* root. A remote-triggered update to a binary installed at
+`/usr/local/bin` will therefore always fail with a permission error — the
+daemon reports this back to Memory's UI (rather than failing silently)
+and keeps retrying, but it can never succeed on its own; someone has to
+run `sudo receptor-daemon update` by hand.
 
 ## Usage
 
@@ -231,14 +260,13 @@ Downloads the latest release and installs it. It:
    immediately; otherwise just tells you to restart `receptor-daemon
    run` yourself.
 
-If the binary is installed somewhere you don't own — which, per the
-[Installing](#installing) instructions above, is the common case:
-`/usr/local/bin` needs root to write to, regardless of whether the
-background service itself is a per-user or `--system` install — you'll
-need `sudo receptor-daemon update`. Running as root still correctly
-finds *your* config (not root's), so no extra flags are needed: it
-resolves the config path for the user who ran `sudo`, not for root
-itself.
+If you installed to a shared system location like `/usr/local/bin`
+instead of the default `~/.local/bin` (see [Installing](#installing)),
+you'll need `sudo receptor-daemon update` — that location needs root to
+write to, regardless of whether the background service itself is a
+per-user or `--system` install. Running as root still correctly finds
+*your* config (not root's), so no extra flags are needed: it resolves
+the config path for the user who ran `sudo`, not for root itself.
 
 #### Triggered remotely from Memory
 
@@ -360,8 +388,9 @@ That needs a real Mac and a real Linux box (or VM). Steps for both:
    an app bundle): `xattr -d com.apple.quarantine receptor-daemon-darwin-arm64`.
 3. Install it:
    ```sh
+   mkdir -p ~/.local/bin
    chmod +x receptor-daemon-darwin-arm64
-   sudo mv receptor-daemon-darwin-arm64 /usr/local/bin/receptor-daemon
+   mv receptor-daemon-darwin-arm64 ~/.local/bin/receptor-daemon
    ```
 4. `receptor-daemon --version` — confirm it's the build you think it is.
 5. Run the wizard (bare `receptor-daemon`): server URL → API key → sync
@@ -380,7 +409,7 @@ That needs a real Mac and a real Linux box (or VM). Steps for both:
 Full clean removal (binary + all config/state):
 ```sh
 receptor-daemon stop
-sudo rm /usr/local/bin/receptor-daemon
+rm ~/.local/bin/receptor-daemon
 rm -rf ~/Library/Application\ Support/receptor-daemon
 # only if you'd also tested --system:
 sudo launchctl bootout system/com.indexmemory.receptor-daemon 2>/dev/null
@@ -402,10 +431,13 @@ sudo rm -f /Library/LaunchDaemons/com.indexmemory.receptor-daemon.plist
    ```
 3. `multipass shell receptor-test`, then:
    ```sh
+   mkdir -p ~/.local/bin
    chmod +x receptor-daemon
-   sudo mv receptor-daemon /usr/local/bin/receptor-daemon
+   mv receptor-daemon ~/.local/bin/receptor-daemon
    receptor-daemon --version
    ```
+   (Ubuntu's default `~/.profile` already puts `~/.local/bin` on `PATH`
+   if the directory exists, so this works with no extra setup.)
 4. Run the wizard (bare `receptor-daemon`), same flow as macOS.
 5. `systemctl --user status receptor-daemon` — look for `active (running)`.
 6. Drop a file in the watched folder, `receptor-daemon sync` or wait for

@@ -15,9 +15,10 @@ const launchdLabel = "com.indexmemory.receptor-daemon"
 
 // launchdPlistPath resolves the per-user plist path via sudoenv (see its
 // doc comment) rather than os.UserHomeDir() directly — needed so `sudo
-// receptor-daemon update` (needed whenever the binary lives somewhere
-// root-owned, e.g. /usr/local/bin — the documented install path)
-// correctly finds the real plist instead of one under root's own home.
+// receptor-daemon update` (needed only if the binary was installed
+// somewhere root-owned, e.g. a shared /usr/local/bin install rather than
+// the default per-user directory) correctly finds the real plist instead
+// of one under root's own home.
 func launchdPlistPath(system bool) (string, error) {
 	return launchdPlistPathForEUID(system, os.Geteuid())
 }
