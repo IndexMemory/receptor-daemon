@@ -36,14 +36,29 @@ enforcement. Mint one from Memory's web UI: **Settings → API Keys**.
 
 ## Installing
 
-Download the latest binary for your platform from the
-[Releases page](https://github.com/IndexMemory/receptor-daemon/releases),
-or build from source (see below). Install it somewhere your own user
-already owns — `~/.local/bin` — so both local (`receptor-daemon update`)
-and remote-triggered updates from Memory can write the new binary in
-place with no `sudo` needed at all.
+```sh
+curl -fsSL https://raw.githubusercontent.com/IndexMemory/receptor-daemon/main/install.sh | sh
+```
 
-### macOS
+Detects your OS/arch, downloads the matching release binary, verifies it
+against the published `checksums.txt`, and installs it to `~/.local/bin`
+— somewhere your own user already owns, so both local
+(`receptor-daemon update`) and remote-triggered updates from Memory can
+write the new binary in place with no `sudo` needed at all. Adds
+`~/.local/bin` to your shell profile's `PATH` if it isn't already there.
+Safe to re-run any time to reinstall/repair.
+
+Then run `receptor-daemon` (open a new terminal first if `PATH` just
+changed) to walk through setup.
+
+### Installing by hand
+
+If you'd rather not pipe a script into `sh`, do the same thing manually:
+download the binary for your platform from the
+[Releases page](https://github.com/IndexMemory/receptor-daemon/releases),
+or build from source (see below).
+
+#### macOS
 
 ```sh
 mkdir -p ~/.local/bin
@@ -60,7 +75,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-### Linux
+#### Linux
 
 ```sh
 mkdir -p ~/.local/bin
@@ -382,29 +397,28 @@ That needs a real Mac and a real Linux box (or VM). Steps for both:
 
 ### macOS
 
-1. Download `receptor-daemon-darwin-arm64` (or `-amd64` on Intel) from the
-   [Releases page](https://github.com/IndexMemory/receptor-daemon/releases).
-2. If Gatekeeper blocks it (it may not, since it's a bare CLI binary, not
-   an app bundle): `xattr -d com.apple.quarantine receptor-daemon-darwin-arm64`.
-3. Install it:
+1. Install it:
    ```sh
-   mkdir -p ~/.local/bin
-   chmod +x receptor-daemon-darwin-arm64
-   mv receptor-daemon-darwin-arm64 ~/.local/bin/receptor-daemon
+   curl -fsSL https://raw.githubusercontent.com/IndexMemory/receptor-daemon/main/install.sh | sh
    ```
-4. `receptor-daemon --version` — confirm it's the build you think it is.
-5. Run the wizard (bare `receptor-daemon`): server URL → API key → sync
+   (Files fetched via `curl` aren't quarantined the way a browser
+   download would be, so Gatekeeper shouldn't get in the way here. If you
+   instead downloaded the binary by hand from the
+   [Releases page](https://github.com/IndexMemory/receptor-daemon/releases)
+   and it does: `xattr -d com.apple.quarantine <path-to-binary>`.)
+2. `receptor-daemon --version` — confirm it's the build you think it is.
+3. Run the wizard (bare `receptor-daemon`): server URL → API key → sync
    interval → at least one folder → say yes to starting it as a
    background service (per-user, no sudo).
-6. Confirm it's really running (not just registered):
+4. Confirm it's really running (not just registered):
    `launchctl list | grep receptor-daemon` — the first column should be a
    real PID, not `-`. `launchctl print
    gui/$(id -u)/com.indexmemory.receptor-daemon` gives more detail
    (`state = running`, `runs` > 0) if you need to dig further.
-7. Drop a file into the watched folder, wait for the interval (or run
+5. Drop a file into the watched folder, wait for the interval (or run
    `receptor-daemon sync` manually), then `receptor-daemon status` to
    confirm it uploaded.
-8. `receptor-daemon stop` when done.
+6. `receptor-daemon stop` when done.
 
 Full clean removal (binary + all config/state):
 ```sh
@@ -421,28 +435,17 @@ sudo rm -f /Library/LaunchDaemons/com.indexmemory.receptor-daemon.plist
 1. `brew install --cask multipass`, then `multipass launch --name
    receptor-test` — defaults to an arm64 guest on Apple Silicon, matching
    the `linux-arm64` release binary.
-2. Get the binary into the VM. Since this repo is private, a plain `curl`
-   of the release asset URL from inside the VM will 404 — instead
-   download it on your Mac first (`gh release download <tag> --repo
-   IndexMemory/receptor-daemon --pattern receptor-daemon-linux-arm64`),
-   then copy it in:
+2. `multipass shell receptor-test`, then install exactly as any real user
+   would (the repo is public, so no auth/transfer workaround is needed):
    ```sh
-   multipass transfer /path/to/receptor-daemon-linux-arm64 receptor-test:/home/ubuntu/receptor-daemon
-   ```
-3. `multipass shell receptor-test`, then:
-   ```sh
-   mkdir -p ~/.local/bin
-   chmod +x receptor-daemon
-   mv receptor-daemon ~/.local/bin/receptor-daemon
+   curl -fsSL https://raw.githubusercontent.com/IndexMemory/receptor-daemon/main/install.sh | sh
    receptor-daemon --version
    ```
-   (Ubuntu's default `~/.profile` already puts `~/.local/bin` on `PATH`
-   if the directory exists, so this works with no extra setup.)
-4. Run the wizard (bare `receptor-daemon`), same flow as macOS.
-5. `systemctl --user status receptor-daemon` — look for `active (running)`.
-6. Drop a file in the watched folder, `receptor-daemon sync` or wait for
+3. Run the wizard (bare `receptor-daemon`), same flow as macOS.
+4. `systemctl --user status receptor-daemon` — look for `active (running)`.
+5. Drop a file in the watched folder, `receptor-daemon sync` or wait for
    the interval, confirm via `receptor-daemon status`.
-7. Boot-survival test (the `loginctl enable-linger` behavior): from your
+6. Boot-survival test (the `loginctl enable-linger` behavior): from your
    Mac (not inside the VM), `multipass stop receptor-test` then
    `multipass start receptor-test` — prefer this two-step version over
    `multipass restart`, which has been observed to hang indefinitely
@@ -455,7 +458,7 @@ sudo rm -f /Library/LaunchDaemons/com.indexmemory.receptor-daemon.plist
    ```
    `active (running)` here confirms the service survived the restart
    without an interactive login — lingering is working.
-8. `receptor-daemon stop` when done.
+7. `receptor-daemon stop` when done.
 
 If a Multipass VM ever gets stuck (state stays `Restarting`/`Stopped`
 with no progress in `multipassd.log` at
@@ -511,22 +514,26 @@ like Multipass, which default to arm64 guests on ARM hosts.
   missing: nothing picks a subset of a fleet for you (an admin always
   chooses explicitly), and rollback only catches a crash-on-startup, not
   a release that installs fine but misbehaves in some subtler way.
-- **No package manager distribution** — no `.deb`, no Homebrew formula
-  yet. Ships as a plain binary via GitHub Releases, same tradeoff already
-  made for the other two Receptor apps.
-- **`start`/`stop` confirmed working against a real launchd on macOS**
-  (per-user), including a real bug found and fixed there: `bootstrap`
-  right after `bootout` (added to make re-running `start` idempotent)
-  could race and leave `RunAtLoad` never firing — a job that looked
-  "loaded" via `launchctl print` but had `runs = 0` and was never
-  actually spawned. Fixed by force-starting with `launchctl kickstart -k`
-  after bootstrap instead of relying on `RunAtLoad`'s own timing.
-  **Still unverified against a real systemd** — so far only confirmed
-  that the unit file content/paths are correct and that it fails cleanly
-  when `systemctl` isn't available (e.g. inside a plain Docker container,
-  which has no init system running). Needs a real Linux box (or a VM
-  with real systemd, e.g. via Multipass) to confirm
-  end-to-end, including the `loginctl enable-linger` boot-start behavior.
+- **No package manager distribution, deliberately** — no `.deb`, no
+  Homebrew formula. `install.sh` covers the one-command-install
+  convenience a package manager would otherwise provide, without the
+  downsides: `.deb`/`apt` installs to a root-owned location, which breaks
+  unattended remote updates the same way `/usr/local/bin` does (see
+  "Installing" above); Homebrew's own versioned Cellar/symlink model
+  would drift out of sync with — and can be clobbered by — this binary's
+  own self-update mechanism, since the two would be independently trying
+  to manage the same file.
+- **`start`/`stop` confirmed working end-to-end against both a real
+  launchd (macOS) and a real systemd (Linux, via a Multipass VM)** —
+  including boot-start survival on Linux (`loginctl enable-linger`) with
+  no interactive login required, and remote update/config/rollback all
+  exercised against real daemons on both platforms. One real launchd bug
+  was found and fixed along the way: `bootstrap` right after `bootout`
+  (added to make re-running `start` idempotent) could race and leave
+  `RunAtLoad` never firing — a job that looked "loaded" via `launchctl
+  print` but had `runs = 0` and was never actually spawned. Fixed by
+  force-starting with `launchctl kickstart -k` after bootstrap instead of
+  relying on `RunAtLoad`'s own timing.
 
 ## License
 
