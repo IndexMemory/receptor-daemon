@@ -99,6 +99,31 @@ func TestApplyRemoteConfigPersistsAndReportsChanges(t *testing.T) {
 	}
 }
 
+func TestApplyRemoteConfigFiltersOutRootPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := config.Config{SyncIntervalMinutes: 15}
+
+	remote := core.RemoteConfig{
+		SyncIntervalMinutes: 15,
+		Folders: []core.RemoteFolder{
+			{Path: "/"},
+			{Path: "/srv/docs"},
+		},
+	}
+
+	foldersChanged, _, err := applyRemoteConfig(remote, &cfg, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !foldersChanged {
+		t.Error("expected foldersChanged to be true")
+	}
+	if len(cfg.Folders) != 1 || cfg.Folders[0].Path != "/srv/docs" {
+		t.Fatalf("expected only the non-root folder to be applied, got %+v", cfg.Folders)
+	}
+}
+
 func TestApplyRemoteConfigReportsNoChangeWhenIdentical(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	configPath := filepath.Join(t.TempDir(), "config.json")

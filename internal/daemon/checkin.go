@@ -68,9 +68,19 @@ func applyRemoteConfig(remote core.RemoteConfig, cfg *config.Config, configPath 
 	intervalChanged = cfg.SyncIntervalMinutes != remote.SyncIntervalMinutes
 	cfg.SyncIntervalMinutes = remote.SyncIntervalMinutes
 
-	newFolders := make([]config.FolderConfig, len(remote.Folders))
-	for i, f := range remote.Folders {
-		newFolders[i] = config.FolderConfig{Path: f.Path, IgnorePatterns: f.IgnorePatterns}
+	// Filtered, not just trusted as-is: Memory's own UI/API already
+	// rejects "/" as a folder path, but this is the last line of defense
+	// against ever actually watching the filesystem root — a stale
+	// value, a direct API call bypassing the UI, or a future bug there
+	// shouldn't be able to make a daemon start hashing/uploading an
+	// entire disk.
+	newFolders := make([]config.FolderConfig, 0, len(remote.Folders))
+	for _, f := range remote.Folders {
+		if config.IsRootPath(f.Path) {
+			log.Printf("check-in: ignoring remotely-pushed folder %q — watching the filesystem root is not allowed", f.Path)
+			continue
+		}
+		newFolders = append(newFolders, config.FolderConfig{Path: f.Path, IgnorePatterns: f.IgnorePatterns})
 	}
 	foldersChanged = !foldersEqual(cfg.Folders, newFolders)
 	cfg.Folders = newFolders

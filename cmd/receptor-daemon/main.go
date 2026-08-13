@@ -279,10 +279,10 @@ func runSetupWizard(configPath string) error {
 		if err != nil {
 			return fmt.Errorf("reading input: %w", err)
 		}
-		if cfg.AddFolder(absPath, splitPatterns(ignoreStr)) {
+		if err := cfg.AddFolder(absPath, splitPatterns(ignoreStr)); err == nil {
 			fmt.Printf("added %s\n", absPath)
 		} else {
-			fmt.Printf("%s is already added\n", absPath)
+			fmt.Printf("%s: %v\n", absPath, err)
 		}
 		fmt.Println()
 	}
@@ -552,8 +552,11 @@ func cmdFoldersAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	if !cfg.AddFolder(path, splitPatterns(*ignore)) {
-		fmt.Printf("%s is already watched\n", path)
+	if err := cfg.AddFolder(path, splitPatterns(*ignore)); err != nil {
+		if errors.Is(err, config.ErrRootFolderNotAllowed) {
+			return err
+		}
+		fmt.Printf("%s: %v\n", path, err)
 		return nil
 	}
 	if err := config.Save(*configPath, cfg); err != nil {

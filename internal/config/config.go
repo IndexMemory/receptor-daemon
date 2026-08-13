@@ -157,16 +157,39 @@ func Save(path string, cfg Config) error {
 	return os.Rename(tmpName, path)
 }
 
-// AddFolder returns false (no error) if path is already watched — no
-// duplicate.
-func (c *Config) AddFolder(path string, ignorePatterns []string) bool {
+// ErrFolderAlreadyWatched is returned by AddFolder when path is already
+// in the list.
+var ErrFolderAlreadyWatched = errors.New("folder is already watched")
+
+// ErrRootFolderNotAllowed is returned by AddFolder when path is the
+// filesystem root — watching the entire filesystem was never the intent
+// of "add a folder to sync," and accepting it risks trying to hash and
+// upload the whole disk. Enforced here (not just in the CLI/wizard) so
+// it also catches a folder list pushed remotely from Memory — see
+// applyRemoteConfig in internal/daemon/checkin.go.
+var ErrRootFolderNotAllowed = errors.New("watching the filesystem root is not allowed — choose a specific folder instead")
+
+// IsRootPath reports whether path refers to the filesystem root (e.g.
+// "/" on Linux/macOS, however it's spelled — "//", "/.", "/../" all
+// clean down to the same thing).
+func IsRootPath(path string) bool {
+	return filepath.Clean(path) == string(filepath.Separator)
+}
+
+// AddFolder returns ErrFolderAlreadyWatched if path is already watched,
+// or ErrRootFolderNotAllowed if path is the filesystem root — either way
+// c.Folders is left unchanged.
+func (c *Config) AddFolder(path string, ignorePatterns []string) error {
+	if IsRootPath(path) {
+		return ErrRootFolderNotAllowed
+	}
 	for _, f := range c.Folders {
 		if f.Path == path {
-			return false
+			return ErrFolderAlreadyWatched
 		}
 	}
 	c.Folders = append(c.Folders, FolderConfig{Path: path, IgnorePatterns: ignorePatterns})
-	return true
+	return nil
 }
 
 // RemoveFolder returns false if path wasn't being watched.

@@ -76,14 +76,39 @@ func TestLoadFillsInDefaultSyncInterval(t *testing.T) {
 
 func TestAddFolderRejectsDuplicatePath(t *testing.T) {
 	cfg := Config{}
-	if !cfg.AddFolder("/srv/docs", nil) {
-		t.Fatal("expected first add to succeed")
+	if err := cfg.AddFolder("/srv/docs", nil); err != nil {
+		t.Fatalf("expected first add to succeed, got %v", err)
 	}
-	if cfg.AddFolder("/srv/docs", nil) {
-		t.Fatal("expected duplicate path add to fail")
+	if err := cfg.AddFolder("/srv/docs", nil); !errors.Is(err, ErrFolderAlreadyWatched) {
+		t.Fatalf("expected ErrFolderAlreadyWatched, got %v", err)
 	}
 	if len(cfg.Folders) != 1 {
 		t.Fatalf("expected 1 folder, got %d", len(cfg.Folders))
+	}
+}
+
+func TestAddFolderRejectsRootPath(t *testing.T) {
+	for _, path := range []string{"/", "//", "/.", "/../"} {
+		cfg := Config{}
+		if err := cfg.AddFolder(path, nil); !errors.Is(err, ErrRootFolderNotAllowed) {
+			t.Fatalf("AddFolder(%q): expected ErrRootFolderNotAllowed, got %v", path, err)
+		}
+		if len(cfg.Folders) != 0 {
+			t.Fatalf("AddFolder(%q): expected no folder added, got %+v", path, cfg.Folders)
+		}
+	}
+}
+
+func TestIsRootPath(t *testing.T) {
+	for _, path := range []string{"/", "//", "/.", "/../"} {
+		if !IsRootPath(path) {
+			t.Fatalf("expected %q to be recognized as the root path", path)
+		}
+	}
+	for _, path := range []string{"/srv/docs", "/root", ""} {
+		if IsRootPath(path) {
+			t.Fatalf("did not expect %q to be recognized as the root path", path)
+		}
 	}
 }
 
