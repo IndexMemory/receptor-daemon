@@ -20,7 +20,7 @@ const CheckInInterval = 1 * time.Minute
 // remoteConfigFromLocal builds a check-in's request payload: the daemon's
 // actual currently-running state. BootStartEnabled reflects
 // service.Status() — the ground truth on disk (a real unit/plist file),
-// same as what `receptor-daemon status` reports — not a separately
+// same as what `receptor status` reports — not a separately
 // tracked flag that could drift from reality.
 func remoteConfigFromLocal(cfg config.Config) core.RemoteConfig {
 	folders := make([]core.RemoteFolder, len(cfg.Folders))
@@ -57,7 +57,7 @@ func foldersEqual(a, b []config.FolderConfig) bool {
 // whether to rebuild its SyncEngines / reschedule its sync ticker.
 //
 // Boot-start is deliberately NOT applied here — whether this daemon runs
-// at all is a local decision (`receptor-daemon start`/`stop`), never a
+// at all is a local decision (`receptor start`/`stop`), never a
 // remote one. A remote "disable" used to uninstall the service from
 // inside its own check-in loop, which stops the very process that would
 // need to be running to notice a later "enable" — a one-way trap with no
@@ -163,7 +163,7 @@ func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config,
 }
 
 // applyRemoteUpdate handles an admin-triggered remote update request —
-// same download-verify-swap-restart path as `receptor-daemon update`
+// same download-verify-swap-restart path as `receptor update`
 // (see ApplyDaemonUpdate), just invoked from the check-in loop instead
 // of someone typing the command. Returns a non-empty error message on
 // failure, reported on the *next* check-in (see checkIn's doc comment)
@@ -172,7 +172,7 @@ func checkIn(ctx context.Context, client *core.MemoryClient, cfg *config.Config,
 // cycle regardless — e.g. a permission error (the binary living
 // somewhere only root can write to, but this service running as a
 // normal user — see the README's "Installing" section) might get fixed
-// by a human running `sudo receptor-daemon update` themselves, at which
+// by a human running `sudo receptor update` themselves, at which
 // point the next report naturally clears this.
 func applyRemoteUpdate(ctx context.Context, client *core.MemoryClient, configPath string) string {
 	opts, err := service.ResolveOptions(configPath, false)
@@ -190,7 +190,7 @@ func applyRemoteUpdate(ctx context.Context, client *core.MemoryClient, configPat
 	if outcome.ServiceRestarted {
 		log.Printf("check-in: updated to %s and restarted the service", outcome.NewVersion)
 	} else {
-		log.Printf("check-in: updated to %s — no service installed, restart `receptor-daemon run` manually", outcome.NewVersion)
+		log.Printf("check-in: updated to %s — no service installed, restart `receptor run` manually", outcome.NewVersion)
 	}
 	return ""
 }

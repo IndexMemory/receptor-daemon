@@ -1,7 +1,7 @@
 #!/bin/sh
-# Installs receptor-daemon into a per-user directory (~/.local/bin) rather
+# Installs receptor into a per-user directory (~/.local/bin) rather
 # than a system location like /usr/local/bin — deliberately, so both local
-# (`receptor-daemon update`) and remote-triggered updates from Memory's web
+# (`receptor update`) and remote-triggered updates from Memory's web
 # UI can write the new binary in place without ever needing sudo. See
 # README.md's "Installing" section for the full reasoning.
 #
@@ -10,7 +10,7 @@
 #
 # Safe to re-run: always re-downloads and verifies the latest release,
 # overwriting whatever's already installed. Ongoing updates after the first
-# install go through `receptor-daemon update` (or Memory's UI), not this
+# install go through `receptor update` (or Memory's UI), not this
 # script — this only ever handles getting the binary onto disk the first
 # time, or repairing/reinstalling it.
 
@@ -28,7 +28,7 @@ os="$(uname -s)"
 case "$os" in
   Linux) os_tag="linux" ;;
   Darwin) os_tag="darwin" ;;
-  *) fail "unsupported OS: $os (receptor-daemon only supports Linux and macOS)" ;;
+  *) fail "unsupported OS: $os (receptor only supports Linux and macOS)" ;;
 esac
 
 arch="$(uname -m)"
@@ -38,15 +38,15 @@ case "$arch" in
   *) fail "unsupported architecture: $arch" ;;
 esac
 
-asset_name="receptor-daemon-${os_tag}-${arch_tag}"
+asset_name="receptor-${os_tag}-${arch_tag}"
 
-log "looking up the latest receptor-daemon release..."
-release_json="$(curl -fsSL --retry 5 --retry-delay 1 -H "User-Agent: receptor-daemon-install-script" \
+log "looking up the latest receptor release..."
+release_json="$(curl -fsSL --retry 5 --retry-delay 1 -H "User-Agent: receptor-install-script" \
   "https://api.github.com/repos/$repo/releases/latest")" \
   || fail "could not reach GitHub to look up the latest release"
 
 version="$(printf '%s' "$release_json" | grep -o '"tag_name":[[:space:]]*"[^"]*"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/')"
-[ -n "$version" ] || fail "could not determine the latest receptor-daemon version from GitHub's response"
+[ -n "$version" ] || fail "could not determine the latest receptor version from GitHub's response"
 
 base_url="https://github.com/$repo/releases/download/$version"
 
@@ -75,9 +75,9 @@ fi
 
 mkdir -p "$install_dir"
 chmod +x "$tmp_dir/$asset_name"
-mv "$tmp_dir/$asset_name" "$install_dir/receptor-daemon"
+mv "$tmp_dir/$asset_name" "$install_dir/receptor"
 
-log "installed receptor-daemon $version to $install_dir/receptor-daemon"
+log "installed receptor $version to $install_dir/receptor"
 
 path_already_set=0
 case ":$PATH:" in
@@ -97,7 +97,7 @@ if [ "$path_already_set" -eq 0 ]; then
   if [ -f "$rc_file" ] && grep -qF "$export_line" "$rc_file" 2>/dev/null; then
     :
   else
-    printf '\n# added by receptor-daemon install.sh\n%s\n' "$export_line" >> "$rc_file"
+    printf '\n# added by receptor install.sh\n%s\n' "$export_line" >> "$rc_file"
   fi
 fi
 
@@ -108,7 +108,7 @@ if [ "$path_already_set" -eq 0 ]; then
   # one runs — never the shell that's currently piping into it. So this
   # terminal specifically needs an explicit `.` first; any *new* terminal
   # opened after this one already has $rc_file's PATH change and can
-  # skip straight to `receptor-daemon`.
+  # skip straight to `receptor`.
   log "  . $rc_file"
 fi
-log "  receptor-daemon"
+log "  receptor"

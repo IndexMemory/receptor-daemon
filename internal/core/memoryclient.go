@@ -192,7 +192,7 @@ type CheckInResult struct {
 	// UpdateToVersion is non-nil when an admin has remotely triggered an
 	// update for this key: the daemon should download and install the
 	// latest release via DownloadDaemonBinary (same path as
-	// `receptor-daemon update`) and restart. Informational string only —
+	// `receptor update`) and restart. Informational string only —
 	// see applyReceptorCheckin in Memory's lib/api_keys.ts, the daemon
 	// always installs whatever is actually latest at apply time.
 	UpdateToVersion *string
@@ -217,7 +217,7 @@ type CheckInResult struct {
 // admin staring at a permanently-stuck "Updating" spinner with no idea
 // anything's wrong. The daemon keeps retrying every cycle regardless
 // (e.g. a permission error blocking a remote update might get fixed by
-// a human running `sudo receptor-daemon update` themselves, at which
+// a human running `sudo receptor update` themselves, at which
 // point the next check-in's report naturally clears this).
 func (c *MemoryClient) CheckIn(ctx context.Context, current RemoteConfig, version, updateError string) (CheckInResult, error) {
 	body, err := json.Marshal(struct {
@@ -266,14 +266,14 @@ func (c *MemoryClient) CheckIn(ctx context.Context, current RemoteConfig, versio
 	}, nil
 }
 
-// MaxBinaryBytes caps how much a single `receptor-daemon update` download
+// MaxBinaryBytes caps how much a single `receptor update` download
 // will accept, purely defensive — real release binaries are a few tens of
 // MB, so anything past this points at a bug or a misbehaving server, not
 // a legitimate release.
 const MaxBinaryBytes = 200 * 1024 * 1024
 
 // LatestDaemonVersion asks Memory what the newest published
-// receptor-daemon release is — see GET /api/receptor-daemon/latest-version
+// receptor release is — see GET /api/receptor-daemon/latest-version
 // (lib/receptor_daemon_releases.ts). Empty string if Memory doesn't know
 // yet (e.g. its own GitHub lookup hasn't succeeded).
 func (c *MemoryClient) LatestDaemonVersion(ctx context.Context) (string, error) {
@@ -305,7 +305,7 @@ func (c *MemoryClient) LatestDaemonVersion(ctx context.Context) (string, error) 
 	return *decoded.LatestVersion, nil
 }
 
-// DaemonBinary is a downloaded, already-checksum-verified receptor-daemon
+// DaemonBinary is a downloaded, already-checksum-verified receptor
 // release binary, ready to be written to disk.
 type DaemonBinary struct {
 	Version string
@@ -313,7 +313,7 @@ type DaemonBinary struct {
 	Bytes   []byte
 }
 
-// DownloadDaemonBinary fetches the latest receptor-daemon release binary
+// DownloadDaemonBinary fetches the latest receptor release binary
 // for the given platform through Memory (never directly from GitHub —
 // see "Rotating an API key"-style reasoning in the README: this daemon
 // only ever needs outbound access to its own Memory server, not to

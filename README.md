@@ -43,12 +43,12 @@ curl -fsSL https://raw.githubusercontent.com/IndexMemory/receptor-daemon/main/in
 Detects your OS/arch, downloads the matching release binary, verifies it
 against the published `checksums.txt`, and installs it to `~/.local/bin`
 — somewhere your own user already owns, so both local
-(`receptor-daemon update`) and remote-triggered updates from Memory can
+(`receptor update`) and remote-triggered updates from Memory can
 write the new binary in place with no `sudo` needed at all. Adds
 `~/.local/bin` to your shell profile's `PATH` if it isn't already there.
 Safe to re-run any time to reinstall/repair.
 
-Then run `receptor-daemon` (open a new terminal first if `PATH` just
+Then run `receptor` (open a new terminal first if `PATH` just
 changed) to walk through setup.
 
 ### Installing by hand
@@ -62,12 +62,12 @@ or build from source (see below).
 
 ```sh
 mkdir -p ~/.local/bin
-chmod +x receptor-daemon-darwin-arm64   # or -darwin-amd64 on an Intel Mac
-mv receptor-daemon-darwin-arm64 ~/.local/bin/receptor-daemon
+chmod +x receptor-darwin-arm64   # or -darwin-amd64 on an Intel Mac
+mv receptor-darwin-arm64 ~/.local/bin/receptor
 ```
 
 macOS has no default `PATH` entry for `~/.local/bin` — add one if
-`receptor-daemon --version` comes back "command not found" after this
+`receptor --version` comes back "command not found" after this
 (assuming the default `zsh` shell):
 
 ```sh
@@ -79,8 +79,8 @@ source ~/.zshrc
 
 ```sh
 mkdir -p ~/.local/bin
-chmod +x receptor-daemon-linux-amd64   # or -linux-arm64
-mv receptor-daemon-linux-amd64 ~/.local/bin/receptor-daemon
+chmod +x receptor-linux-amd64   # or -linux-arm64
+mv receptor-linux-amd64 ~/.local/bin/receptor
 ```
 
 Most distributions (Ubuntu/Debian included) already put `~/.local/bin`
@@ -96,7 +96,7 @@ time, so it works regardless of `PATH`.
 **Tradeoff worth knowing about a shared system location instead** (e.g.
 `/usr/local/bin`, useful if several accounts on one shared machine should
 all use the same install): that needs `sudo mv` above instead, and every
-future update — `receptor-daemon update`, and any admin-triggered remote
+future update — `receptor update`, and any admin-triggered remote
 update from Memory (see "Updating" below) — will need `sudo` too. That's
 fine for the *local* command (just prefix it), but a remote update has no
 terminal to prompt for a password on: it runs as whatever user the
@@ -105,18 +105,18 @@ install is *not* root. A remote-triggered update to a binary installed at
 `/usr/local/bin` will therefore always fail with a permission error — the
 daemon reports this back to Memory's UI (rather than failing silently)
 and keeps retrying, but it can never succeed on its own; someone has to
-run `sudo receptor-daemon update` by hand.
+run `sudo receptor update` by hand.
 
 ## Usage
 
-Easiest path: just run `receptor-daemon` with no arguments. On first run
+Easiest path: just run `receptor` with no arguments. On first run
 it walks you through setup interactively (server URL, API key, sync
 interval, at least one folder — it won't let you finish with zero, since
 a daemon watching nothing is useless — and an optional service install
 right there); on later runs it just prints a quick status summary instead
 of re-running setup over your working config.
 
-Want to review or update your setup later? Run `receptor-daemon init`
+Want to review or update your setup later? Run `receptor init`
 (with no flags) any time — same wizard, explicitly, and safe to re-run:
 it loads whatever's already configured and uses it as the defaults/
 starting point (press Enter to keep a value, including the current API
@@ -129,42 +129,42 @@ if you'd rather not go through the wizard:
 ```sh
 # One-time setup — prompts for the API key without echoing it to the
 # terminal (or pass --api-key directly, which does leave it in shell history)
-receptor-daemon init --server https://memory.indexmemory.com
+receptor init --server https://memory.indexmemory.com
 
 # Add folders to watch
-receptor-daemon folders add /srv/shared-docs --ignore node_modules,*.tmp
-receptor-daemon folders list
-receptor-daemon folders remove /srv/shared-docs
+receptor folders add /srv/shared-docs --ignore node_modules,*.tmp
+receptor folders list
+receptor folders remove /srv/shared-docs
 
 # Update settings later — same `init` command, just called again with
 # only the flag(s) you want to change. Never touches your folder list,
 # and restarts the background service automatically if one is running,
 # so the change actually takes effect.
-receptor-daemon init --sync-interval-minutes 30
+receptor init --sync-interval-minutes 30
 
 # One-shot manual sync (useful for testing, or a cron-based setup instead
 # of a long-running service)
-receptor-daemon sync
+receptor sync
 
 # Current configuration (server, masked API key, sync interval, folders
 # with their own ignore patterns), connection, service status, and
 # recent activity
-receptor-daemon status
+receptor status
 
-# Run receptor-daemon in the background from now on (systemd on Linux,
+# Run receptor in the background from now on (systemd on Linux,
 # launchd on macOS) instead of needing a terminal open with `run`.
-receptor-daemon start
-receptor-daemon stop
+receptor start
+receptor stop
 
 # Which build you're running — check this first if something documented
 # here seems to be missing; you may be on an old binary
-receptor-daemon --version
+receptor --version
 ```
 
 `start`/`stop` default to per-user (no sudo) — that's the right choice
 almost always, including for every test/dev setup. Add `--system` (needs
 sudo) only for a shared/headless machine nobody ever logs into: `sudo
-receptor-daemon start --system`. One platform detail if you do need it: on
+receptor start --system`. One platform detail if you do need it: on
 Linux, plain `start` already survives a reboot without logging in
 (`loginctl enable-linger`, done for you automatically); on macOS there's
 no such option, so `--system` is the only way to get real boot-time start
@@ -176,12 +176,12 @@ Flags must come before the positional argument for a given subcommand
 
 All subcommands accept `--config <path>` to override the default config
 location (an XDG-style per-user config directory:
-`~/.config/receptor-daemon/config.json` on Linux,
-`~/Library/Application Support/receptor-daemon/config.json` on macOS).
+`~/.config/receptor/config.json` on Linux,
+`~/Library/Application Support/receptor/config.json` on macOS).
 
-There's also a `receptor-daemon run` command — the actual foreground sync
+There's also a `receptor run` command — the actual foreground sync
 loop, which is what the background service executes once `start` has set
-it up (its systemd unit / launchd plist literally execs `receptor-daemon
+it up (its systemd unit / launchd plist literally execs `receptor
 run --config ...`). You should never need to type this yourself; use
 `start` to run it as a proper background service instead. It's
 intentionally left out of `--help`'s main listing so it doesn't look like
@@ -212,7 +212,7 @@ equivalent, not an oversight.
 
 ## Remote configuration from Memory
 
-Once a receptor-kind API key is connected, `receptor-daemon run` (the
+Once a receptor-kind API key is connected, `receptor run` (the
 background service) checks in with Memory every **1 minute** — a fixed
 cadence, independent of the sync interval, so a config change pushed from
 Memory's web UI feels responsive even if sync itself runs rarely. Every
@@ -226,11 +226,11 @@ config and the daemon applies it immediately: persists it to `config.json`
 if the interval changed.
 
 This only runs inside the `run` loop (i.e. once `start` has set the
-service up) — a one-off `sync` or manually running `receptor-daemon run`
+service up) — a one-off `sync` or manually running `receptor run`
 in a terminal doesn't check in.
 
 Whether the daemon runs at all — boot-start — is **local-only**, set via
-`receptor-daemon start`/`stop` on the machine itself, and is not
+`receptor start`/`stop` on the machine itself, and is not
 remotely settable from Memory's UI (which shows it as read-only status).
 An earlier version of this feature let boot-start be toggled remotely,
 but a remote "disable" uninstalled the very service that would need to
@@ -242,12 +242,12 @@ Every check-in also reports this build's own version (`main.version`,
 the same string `--version` prints) purely as telemetry — Memory
 compares it against the latest published release and flags out-of-date
 daemons in the Integrations page. Nothing here acts on that report on
-its own; see `receptor-daemon update` below for what actually applies it.
+its own; see `receptor update` below for what actually applies it.
 
 ### Updating
 
 ```sh
-receptor-daemon update
+receptor update
 ```
 
 Downloads the latest release and installs it. It:
@@ -271,13 +271,13 @@ Downloads the latest release and installs it. It:
    behind even if interrupted). See "Automatic rollback" below for what
    that backup is for.
 4. Restarts the background service if one is installed
-   (`receptor-daemon start` set one up), so the new version takes effect
-   immediately; otherwise just tells you to restart `receptor-daemon
+   (`receptor start` set one up), so the new version takes effect
+   immediately; otherwise just tells you to restart `receptor
    run` yourself.
 
 If you installed to a shared system location like `/usr/local/bin`
 instead of the default `~/.local/bin` (see [Installing](#installing)),
-you'll need `sudo receptor-daemon update` — that location needs root to
+you'll need `sudo receptor update` — that location needs root to
 write to, regardless of whether the background service itself is a
 per-user or `--system` install. Running as root still correctly finds
 *your* config (not root's), so no extra flags are needed: it resolves
@@ -302,7 +302,7 @@ Confirmation works by detecting that the daemon's reported version
 *changed* since the request, not by matching a specific target exactly
 — if an even newer release lands while the request is in flight, the
 daemon installs whatever is actually latest at that moment (same as
-running `receptor-daemon update` locally would), and the request still
+running `receptor update` locally would), and the request still
 confirms cleanly instead of getting stuck.
 
 If applying the update fails (most commonly: a permission error,
@@ -314,7 +314,7 @@ since it's a consequence of processing the previous check-in's
 response. Memory's UI shows this ("Update failed — retrying") instead
 of leaving an admin staring at a spinner that can never resolve on its
 own. The daemon keeps retrying every cycle regardless, in case someone
-fixes the underlying issue (e.g. runs `sudo receptor-daemon update` by
+fixes the underlying issue (e.g. runs `sudo receptor update` by
 hand once).
 
 #### Automatic rollback
@@ -362,13 +362,13 @@ babysit here and nothing to delete by hand.
 `server_url` is never part of a rotation (or remotely settable at all —
 see above); rotation only ever replaces the key, never the server it
 authenticates against. If a daemon genuinely needs to point at a
-different Memory deployment, that's a fresh `receptor-daemon init` on
+different Memory deployment, that's a fresh `receptor init` on
 the machine.
 
 ## Building from source
 
 ```sh
-go build -o receptor-daemon ./cmd/receptor-daemon
+go build -o receptor ./cmd/receptor
 ```
 
 No cgo, no GUI toolkit, no platform-specific build dependencies — this is
@@ -406,28 +406,28 @@ That needs a real Mac and a real Linux box (or VM). Steps for both:
    instead downloaded the binary by hand from the
    [Releases page](https://github.com/IndexMemory/receptor-daemon/releases)
    and it does: `xattr -d com.apple.quarantine <path-to-binary>`.)
-2. `receptor-daemon --version` — confirm it's the build you think it is.
-3. Run the wizard (bare `receptor-daemon`): server URL → API key → sync
+2. `receptor --version` — confirm it's the build you think it is.
+3. Run the wizard (bare `receptor`): server URL → API key → sync
    interval → at least one folder → say yes to starting it as a
    background service (per-user, no sudo).
 4. Confirm it's really running (not just registered):
-   `launchctl list | grep receptor-daemon` — the first column should be a
+   `launchctl list | grep receptor` — the first column should be a
    real PID, not `-`. `launchctl print
-   gui/$(id -u)/com.indexmemory.receptor-daemon` gives more detail
+   gui/$(id -u)/com.indexmemory.receptor` gives more detail
    (`state = running`, `runs` > 0) if you need to dig further.
 5. Drop a file into the watched folder, wait for the interval (or run
-   `receptor-daemon sync` manually), then `receptor-daemon status` to
+   `receptor sync` manually), then `receptor status` to
    confirm it uploaded.
-6. `receptor-daemon stop` when done.
+6. `receptor stop` when done.
 
 Full clean removal (binary + all config/state):
 ```sh
-receptor-daemon stop
-rm ~/.local/bin/receptor-daemon
-rm -rf ~/Library/Application\ Support/receptor-daemon
+receptor stop
+rm ~/.local/bin/receptor
+rm -rf ~/Library/Application\ Support/receptor
 # only if you'd also tested --system:
-sudo launchctl bootout system/com.indexmemory.receptor-daemon 2>/dev/null
-sudo rm -f /Library/LaunchDaemons/com.indexmemory.receptor-daemon.plist
+sudo launchctl bootout system/com.indexmemory.receptor 2>/dev/null
+sudo rm -f /Library/LaunchDaemons/com.indexmemory.receptor.plist
 ```
 
 ### Linux, via a Multipass VM (useful on a Mac with no spare Linux box)
@@ -439,26 +439,26 @@ sudo rm -f /Library/LaunchDaemons/com.indexmemory.receptor-daemon.plist
    would (the repo is public, so no auth/transfer workaround is needed):
    ```sh
    curl -fsSL https://raw.githubusercontent.com/IndexMemory/receptor-daemon/main/install.sh | sh
-   receptor-daemon --version
+   receptor --version
    ```
-3. Run the wizard (bare `receptor-daemon`), same flow as macOS.
-4. `systemctl --user status receptor-daemon` — look for `active (running)`.
-5. Drop a file in the watched folder, `receptor-daemon sync` or wait for
-   the interval, confirm via `receptor-daemon status`.
+3. Run the wizard (bare `receptor`), same flow as macOS.
+4. `systemctl --user status receptor` — look for `active (running)`.
+5. Drop a file in the watched folder, `receptor sync` or wait for
+   the interval, confirm via `receptor status`.
 6. Boot-survival test (the `loginctl enable-linger` behavior): from your
    Mac (not inside the VM), `multipass stop receptor-test` then
    `multipass start receptor-test` — prefer this two-step version over
    `multipass restart`, which has been observed to hang indefinitely
-   (Multipass/QEMU issue, unrelated to `receptor-daemon`) with no
+   (Multipass/QEMU issue, unrelated to `receptor`) with no
    further guest activity in `multipassd.log` after the reboot signal.
    Then, **without shelling in first** (logging in would defeat the
    point of the test), check from the host:
    ```sh
-   multipass exec receptor-test -- systemctl --user status receptor-daemon
+   multipass exec receptor-test -- systemctl --user status receptor
    ```
    `active (running)` here confirms the service survived the restart
    without an interactive login — lingering is working.
-7. `receptor-daemon stop` when done.
+7. `receptor stop` when done.
 
 If a Multipass VM ever gets stuck (state stays `Restarting`/`Stopped`
 with no progress in `multipassd.log` at
@@ -503,7 +503,7 @@ like Multipass, which default to arm64 guests on ARM hosts.
   rotation** — verified end-to-end against a real Memory instance and
   real daemons (macOS + Linux). Boot-start is deliberately *not*
   remotely settable (see "Remote configuration from Memory" above): it's
-  a local decision via `receptor-daemon start`/`stop`, reported to
+  a local decision via `receptor start`/`stop`, reported to
   Memory as read-only status. `server_url` is likewise never remotely
   settable, rotation included (see "Rotating an API key" above).
 - **Remote updates have no automatic/percentage staging.** An admin can

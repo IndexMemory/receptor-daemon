@@ -76,11 +76,11 @@ func logEvent(activityLog *ActivityLog, folderPath string, ev core.SyncEvent) {
 }
 
 // SyncOnce runs one full scan + forced retry pass across all configured
-// folders and returns. Used by `receptor-daemon sync` and as the first
+// folders and returns. Used by `receptor sync` and as the first
 // pass of `run`.
 func SyncOnce(ctx context.Context, cfg config.Config, configPath string) error {
 	if cfg.APIKey == "" || cfg.ServerURL == "" {
-		return fmt.Errorf("not configured — run `receptor-daemon init` first")
+		return fmt.Errorf("not configured — run `receptor init` first")
 	}
 	stateDir := StateDir(configPath)
 	activityLog := NewActivityLog(filepath.Join(stateDir, "activity.json"))
@@ -94,9 +94,9 @@ func SyncOnce(ctx context.Context, cfg config.Config, configPath string) error {
 }
 
 // Run starts the foreground sync loop: an immediate sync on start, then a
-// periodic timer, until SIGINT/SIGTERM. This is what `receptor-daemon run`
+// periodic timer, until SIGINT/SIGTERM. This is what `receptor run`
 // (and the systemd/launchd service unit) executes. version is the build's
-// `main.version` (see cmd/receptor-daemon/main.go), reported on every
+// `main.version` (see cmd/receptor/main.go), reported on every
 // check-in purely as telemetry — Memory uses it to flag out-of-date
 // daemons in the Integrations UI, nothing here acts on it.
 //
@@ -107,7 +107,7 @@ func SyncOnce(ctx context.Context, cfg config.Config, configPath string) error {
 // crash-restart.
 func Run(ctx context.Context, cfg config.Config, configPath string, version string) error {
 	if cfg.APIKey == "" || cfg.ServerURL == "" {
-		return fmt.Errorf("not configured — run `receptor-daemon init` first")
+		return fmt.Errorf("not configured — run `receptor init` first")
 	}
 
 	if opts, err := service.ResolveOptions(configPath, false); err == nil {
@@ -122,7 +122,7 @@ func Run(ctx context.Context, cfg config.Config, configPath string, version stri
 	engines := buildEngines(cfg, stateDir, client, activityLog)
 
 	if len(engines) == 0 {
-		log.Println("no folders configured — run `receptor-daemon folders add <path>`")
+		log.Println("no folders configured — run `receptor folders add <path>`")
 	}
 
 	runOnce := func() {
@@ -157,7 +157,7 @@ func Run(ctx context.Context, cfg config.Config, configPath string, version stri
 	// pending resolves one way or another.
 	var lastUpdateError string
 
-	log.Printf("receptor-daemon running: %d folder(s), syncing every %d minutes, checking in every %s", len(engines), cfg.SyncIntervalMinutes, CheckInInterval)
+	log.Printf("receptor running: %d folder(s), syncing every %d minutes, checking in every %s", len(engines), cfg.SyncIntervalMinutes, CheckInInterval)
 	for {
 		select {
 		case <-syncTicker.C:
@@ -174,7 +174,7 @@ func Run(ctx context.Context, cfg config.Config, configPath string, version stri
 			if foldersChanged {
 				engines = buildEngines(cfg, stateDir, client, activityLog)
 				if len(engines) == 0 {
-					log.Println("no folders configured — run `receptor-daemon folders add <path>`")
+					log.Println("no folders configured — run `receptor folders add <path>`")
 				}
 			}
 			if intervalChanged {

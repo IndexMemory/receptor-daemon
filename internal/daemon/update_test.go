@@ -18,7 +18,7 @@ func TestApplyDaemonUpdateWritesVerifiedBinaryAndReportsNoServiceInstalled(t *te
 	// so this always sees "not installed" regardless of the test host,
 	// same convention as checkin_test.go.
 	t.Setenv("HOME", t.TempDir())
-	payload := []byte("new receptor-daemon binary contents")
+	payload := []byte("new receptor binary contents")
 	sum := sha256.Sum256(payload)
 	expectedSha256 := hex.EncodeToString(sum[:])
 
@@ -31,7 +31,7 @@ func TestApplyDaemonUpdateWritesVerifiedBinaryAndReportsNoServiceInstalled(t *te
 	defer srv.Close()
 
 	client := core.NewMemoryClient(srv.URL, "mem_test")
-	binaryPath := filepath.Join(t.TempDir(), "receptor-daemon")
+	binaryPath := filepath.Join(t.TempDir(), "receptor")
 	configPath := filepath.Join(t.TempDir(), "config.json")
 
 	outcome, err := ApplyDaemonUpdate(context.Background(), client, binaryPath, configPath)
@@ -77,7 +77,7 @@ func TestApplyDaemonUpdateWritesVerifiedBinaryAndReportsNoServiceInstalled(t *te
 
 func TestApplyDaemonUpdateBacksUpTheCurrentBinary(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	payload := []byte("new receptor-daemon binary contents")
+	payload := []byte("new receptor binary contents")
 	sum := sha256.Sum256(payload)
 	expectedSha256 := hex.EncodeToString(sum[:])
 
@@ -90,7 +90,7 @@ func TestApplyDaemonUpdateBacksUpTheCurrentBinary(t *testing.T) {
 	defer srv.Close()
 
 	client := core.NewMemoryClient(srv.URL, "mem_test")
-	binaryPath := filepath.Join(t.TempDir(), "receptor-daemon")
+	binaryPath := filepath.Join(t.TempDir(), "receptor")
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(binaryPath, []byte("old working binary"), 0o755); err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestApplyDaemonUpdateReturnsErrorOnChecksumMismatchAndWritesNothing(t *test
 	defer srv.Close()
 
 	client := core.NewMemoryClient(srv.URL, "mem_test")
-	binaryPath := filepath.Join(t.TempDir(), "receptor-daemon")
+	binaryPath := filepath.Join(t.TempDir(), "receptor")
 
 	if _, err := ApplyDaemonUpdate(context.Background(), client, binaryPath, filepath.Join(t.TempDir(), "config.json")); err == nil {
 		t.Fatal("expected a checksum error")

@@ -10,8 +10,8 @@ import (
 )
 
 func TestSystemdUnitContentIncludesBinaryAndConfigPaths(t *testing.T) {
-	content := systemdUnitContent(Options{BinaryPath: "/usr/local/bin/receptor-daemon", ConfigPath: "/home/alice/.config/receptor-daemon/config.json"})
-	if !strings.Contains(content, "ExecStart=/usr/local/bin/receptor-daemon run --config /home/alice/.config/receptor-daemon/config.json") {
+	content := systemdUnitContent(Options{BinaryPath: "/usr/local/bin/receptor", ConfigPath: "/home/alice/.config/receptor/config.json"})
+	if !strings.Contains(content, "ExecStart=/usr/local/bin/receptor run --config /home/alice/.config/receptor/config.json") {
 		t.Fatalf("unexpected unit content:\n%s", content)
 	}
 }
@@ -36,7 +36,7 @@ func TestSystemdUnitPathDiffersByScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if systemPath != "/etc/systemd/system/receptor-daemon.service" {
+	if systemPath != "/etc/systemd/system/receptor.service" {
 		t.Fatalf("unexpected system unit path: %s", systemPath)
 	}
 
@@ -44,7 +44,7 @@ func TestSystemdUnitPathDiffersByScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(userPath, filepath.Join(".config", "systemd", "user", "receptor-daemon.service")) {
+	if !strings.HasSuffix(userPath, filepath.Join(".config", "systemd", "user", "receptor.service")) {
 		t.Fatalf("unexpected user unit path: %s", userPath)
 	}
 	if !filepath.IsAbs(userPath) {
@@ -53,12 +53,12 @@ func TestSystemdUnitPathDiffersByScope(t *testing.T) {
 }
 
 func TestSystemctlArgsPrependsUserFlagUnlessSystem(t *testing.T) {
-	userArgs := systemctlArgs(false, "enable", "--now", "receptor-daemon.service")
+	userArgs := systemctlArgs(false, "enable", "--now", "receptor.service")
 	if userArgs[0] != "--user" {
 		t.Fatalf("expected --user flag prepended, got %v", userArgs)
 	}
 
-	systemArgs := systemctlArgs(true, "enable", "--now", "receptor-daemon.service")
+	systemArgs := systemctlArgs(true, "enable", "--now", "receptor.service")
 	if systemArgs[0] == "--user" {
 		t.Fatalf("did not expect --user flag for system scope, got %v", systemArgs)
 	}
@@ -76,7 +76,7 @@ func TestInstallWritesUnitFileWithGeneratedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{BinaryPath: "/usr/local/bin/receptor-daemon", ConfigPath: "/tmp/config.json"}
+	opts := Options{BinaryPath: "/usr/local/bin/receptor", ConfigPath: "/tmp/config.json"}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestInstallWritesUnitFileWithGeneratedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "/usr/local/bin/receptor-daemon") {
+	if !strings.Contains(string(data), "/usr/local/bin/receptor") {
 		t.Fatalf("unexpected unit file contents:\n%s", data)
 	}
 }

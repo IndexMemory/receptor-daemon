@@ -318,7 +318,7 @@ func TestLatestDaemonVersionHandlesNullVersion(t *testing.T) {
 }
 
 func TestDownloadDaemonBinaryAcceptsMatchingChecksum(t *testing.T) {
-	payload := []byte("fake receptor-daemon binary contents")
+	payload := []byte("fake receptor binary contents")
 	sum := sha256.Sum256(payload)
 	expected := hex.EncodeToString(sum[:])
 

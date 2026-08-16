@@ -2,7 +2,8 @@
 /bin/
 /dist/
 *.test
-/receptor-daemon
-/receptor-daemon-linux-amd64
-/receptor-daemon-darwin-amd64
-/receptor-daemon-darwin-arm64
+/receptor
+/receptor-linux-amd64
+/receptor-linux-arm64
+/receptor-darwin-amd64
+/receptor-darwin-arm64

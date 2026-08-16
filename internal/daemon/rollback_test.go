@@ -61,7 +61,7 @@ func TestRecordUpdateStartupAttemptExceedsAfterMaxAttempts(t *testing.T) {
 
 func TestRollbackToPreviousBinaryRestoresAndClearsState(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	binaryPath := filepath.Join(t.TempDir(), "receptor-daemon")
+	binaryPath := filepath.Join(t.TempDir(), "receptor")
 	previousPath := binaryPath + ".previous"
 
 	if err := os.WriteFile(binaryPath, []byte("broken new version"), 0o755); err != nil {
@@ -95,7 +95,7 @@ func TestRollbackToPreviousBinaryRestoresAndClearsState(t *testing.T) {
 
 func TestRollbackToPreviousBinaryErrorsWhenNoBackupExists(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	binaryPath := filepath.Join(t.TempDir(), "receptor-daemon")
+	binaryPath := filepath.Join(t.TempDir(), "receptor")
 	if err := os.WriteFile(binaryPath, []byte("current"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestRollbackToPreviousBinaryErrorsWhenNoBackupExists(t *testing.T) {
 
 func TestCheckForBadUpdateAndRollBackIfNeededDoesNothingWhenNoUpdatePending(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	binaryPath := filepath.Join(t.TempDir(), "receptor-daemon")
+	binaryPath := filepath.Join(t.TempDir(), "receptor")
 	if err := os.WriteFile(binaryPath, []byte("current"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestCheckForBadUpdateAndRollBackIfNeededDoesNothingWhenNoUpdatePending(t *t
 
 func TestCheckForBadUpdateAndRollBackIfNeededStaysWithinBudget(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	binaryPath := filepath.Join(t.TempDir(), "receptor-daemon")
+	binaryPath := filepath.Join(t.TempDir(), "receptor")
 	if err := os.WriteFile(binaryPath, []byte("new version, first startup attempt"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestCheckForBadUpdateAndRollBackIfNeededStaysWithinBudget(t *testing.T) {
 
 func TestCheckForBadUpdateAndRollBackIfNeededRollsBackAfterMaxAttempts(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
-	binaryPath := filepath.Join(t.TempDir(), "receptor-daemon")
+	binaryPath := filepath.Join(t.TempDir(), "receptor")
 	if err := os.WriteFile(binaryPath, []byte("broken new version"), 0o755); err != nil {
 		t.Fatal(err)
 	}

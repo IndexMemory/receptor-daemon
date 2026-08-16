@@ -11,11 +11,11 @@ import (
 	"github.com/IndexMemory/receptor-daemon/internal/sudoenv"
 )
 
-const launchdLabel = "com.indexmemory.receptor-daemon"
+const launchdLabel = "com.indexmemory.receptor"
 
 // launchdPlistPath resolves the per-user plist path via sudoenv (see its
 // doc comment) rather than os.UserHomeDir() directly — needed so `sudo
-// receptor-daemon update` (needed only if the binary was installed
+// receptor update` (needed only if the binary was installed
 // somewhere root-owned, e.g. a shared /usr/local/bin install rather than
 // the default per-user directory) correctly finds the real plist instead
 // of one under root's own home.
@@ -41,7 +41,7 @@ func launchdPlistPathForEUID(system bool, euid int) (string, error) {
 }
 
 func launchdLogPath(configPath string) string {
-	return filepath.Join(filepath.Dir(configPath), "state", "receptor-daemon.log")
+	return filepath.Join(filepath.Dir(configPath), "state", "receptor.log")
 }
 
 // launchdPlistContent is a pure function so it's testable without
@@ -153,7 +153,7 @@ func Install(opts Options) error {
 }
 
 // Restart force-restarts an already-installed service — used by
-// `receptor-daemon update` after swapping in a new binary, so the new
+// `receptor update` after swapping in a new binary, so the new
 // version actually takes effect rather than sitting on disk unused by
 // the still-running old process. Same kickstart -k Install() uses to
 // force-start, which works regardless of whether the job was already

@@ -1,4 +1,4 @@
-// Package config owns receptor-daemon's on-disk configuration: server URL,
+// Package config owns receptor's on-disk configuration: server URL,
 // API key, sync interval, and the watched-folder list — all in one plain
 // JSON file, both hand-editable and manageable via the `folders`/`init`
 // CLI subcommands. There is no OS-keyring integration here (unlike
@@ -43,15 +43,15 @@ type Config struct {
 
 // ErrNotInitialized is returned by Load when the config file doesn't
 // exist yet — the caller should tell the user to run `init` first.
-var ErrNotInitialized = errors.New("receptor-daemon is not initialized yet — run `receptor-daemon init` first")
+var ErrNotInitialized = errors.New("receptor is not initialized yet — run `receptor init` first")
 
 // DefaultPath resolves the config file location: an XDG-style per-user
 // config directory (`os.UserConfigDir()`, i.e. ~/.config on Linux,
-// ~/Library/Application Support on macOS) plus a "receptor-daemon"
+// ~/Library/Application Support on macOS) plus a "receptor"
 // subdirectory. Overridable per-invocation via the --config flag handled
-// in cmd/receptor-daemon.
+// in cmd/receptor.
 //
-// Running as root via sudo (e.g. `sudo receptor-daemon update`, needed
+// Running as root via sudo (e.g. `sudo receptor update`, needed
 // whenever the binary lives somewhere root-owned — the default install
 // location is a per-user directory that needs no sudo at all, but a
 // shared system location like /usr/local/bin is still supported and
@@ -67,7 +67,7 @@ func DefaultPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "receptor-daemon", "config.json"), nil
+	return filepath.Join(dir, "receptor", "config.json"), nil
 }
 
 func userConfigDir() (string, error) {

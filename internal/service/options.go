@@ -1,8 +1,8 @@
-// Package service installs/uninstalls receptor-daemon as a background
+// Package service installs/uninstalls receptor as a background
 // service — systemd on Linux, launchd on macOS. The two implementations
 // live in build-tag-gated files (systemd.go for linux, launchd.go for
 // darwin) that both expose the same Install/Uninstall functions, so
-// cmd/receptor-daemon can call service.Install(opts) without caring which
+// cmd/receptor can call service.Install(opts) without caring which
 // platform it's running on.
 package service
 
@@ -16,7 +16,7 @@ import (
 
 // Options describes what to install and where.
 type Options struct {
-	// BinaryPath is the absolute path to the receptor-daemon executable —
+	// BinaryPath is the absolute path to the receptor executable —
 	// baked into the generated unit/plist's exec line so the service
 	// keeps working regardless of the caller's CWD or PATH.
 	BinaryPath string
@@ -65,7 +65,7 @@ func guardAgainstRootPerUserInstallEUID(opts Options, euid int) error {
 // ResolveOptions fills in Options' BinaryPath (resolved to an absolute,
 // symlink-free path so the generated unit/plist keeps working regardless
 // of how the current process was invoked) and ConfigPath. Shared by
-// cmd/receptor-daemon (start/stop/the setup wizard) and internal/daemon
+// cmd/receptor (start/stop/the setup wizard) and internal/daemon
 // (reconciling boot-start when a remote config change toggles it).
 func ResolveOptions(configPath string, system bool) (Options, error) {
 	binaryPath, err := os.Executable()

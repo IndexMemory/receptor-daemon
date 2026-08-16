@@ -11,13 +11,13 @@ import (
 
 func TestLaunchdPlistContentIncludesBinaryAndConfigPaths(t *testing.T) {
 	content := launchdPlistContent(Options{
-		BinaryPath: "/usr/local/bin/receptor-daemon",
-		ConfigPath: "/Users/alice/Library/Application Support/receptor-daemon/config.json",
+		BinaryPath: "/usr/local/bin/receptor",
+		ConfigPath: "/Users/alice/Library/Application Support/receptor/config.json",
 	})
-	if !strings.Contains(content, "<string>/usr/local/bin/receptor-daemon</string>") {
+	if !strings.Contains(content, "<string>/usr/local/bin/receptor</string>") {
 		t.Fatalf("expected binary path in plist:\n%s", content)
 	}
-	if !strings.Contains(content, "<string>/Users/alice/Library/Application Support/receptor-daemon/config.json</string>") {
+	if !strings.Contains(content, "<string>/Users/alice/Library/Application Support/receptor/config.json</string>") {
 		t.Fatalf("expected config path in plist:\n%s", content)
 	}
 	if !strings.Contains(content, "<key>RunAtLoad</key>") || !strings.Contains(content, "<key>KeepAlive</key>") {
@@ -34,7 +34,7 @@ func TestLaunchdPlistPathDiffersByScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if systemPath != "/Library/LaunchDaemons/com.indexmemory.receptor-daemon.plist" {
+	if systemPath != "/Library/LaunchDaemons/com.indexmemory.receptor.plist" {
 		t.Fatalf("unexpected system plist path: %s", systemPath)
 	}
 
@@ -42,7 +42,7 @@ func TestLaunchdPlistPathDiffersByScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(userPath, filepath.Join("Library", "LaunchAgents", "com.indexmemory.receptor-daemon.plist")) {
+	if !strings.Contains(userPath, filepath.Join("Library", "LaunchAgents", "com.indexmemory.receptor.plist")) {
 		t.Fatalf("unexpected user plist path: %s", userPath)
 	}
 }
@@ -72,7 +72,7 @@ func TestInstallWritesPlistFileWithGeneratedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{BinaryPath: "/usr/local/bin/receptor-daemon", ConfigPath: filepath.Join(home, "config.json")}
+	opts := Options{BinaryPath: "/usr/local/bin/receptor", ConfigPath: filepath.Join(home, "config.json")}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestInstallWritesPlistFileWithGeneratedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "/usr/local/bin/receptor-daemon") {
+	if !strings.Contains(string(data), "/usr/local/bin/receptor") {
 		t.Fatalf("unexpected plist file contents:\n%s", data)
 	}
 }
@@ -117,7 +117,7 @@ func TestStatusReportsInstalledUserScopeAfterWritingPlist(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{BinaryPath: "/usr/local/bin/receptor-daemon", ConfigPath: filepath.Join(home, "config.json")}
+	opts := Options{BinaryPath: "/usr/local/bin/receptor", ConfigPath: filepath.Join(home, "config.json")}
 	if err := os.WriteFile(path, []byte(launchdPlistContent(opts)), 0o644); err != nil {
 		t.Fatal(err)
 	}

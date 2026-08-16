@@ -11,11 +11,11 @@ import (
 	"github.com/IndexMemory/receptor-daemon/internal/sudoenv"
 )
 
-const systemdUnitName = "receptor-daemon.service"
+const systemdUnitName = "receptor.service"
 
 // systemdUnitPath resolves the per-user unit path via sudoenv (see its
 // doc comment) rather than os.UserHomeDir() directly — without this, a
-// `sudo receptor-daemon update` (needed only if the binary was installed
+// `sudo receptor update` (needed only if the binary was installed
 // somewhere root-owned, e.g. a shared /usr/local/bin install rather than
 // the default per-user directory) would silently look at
 // */root/.config/...* instead of the real unit file, making Status()
@@ -50,7 +50,7 @@ func systemdUnitContent(opts Options) string {
 		target = "multi-user.target"
 	}
 	return fmt.Sprintf(`[Unit]
-Description=Receptor daemon — syncs local folders into Memory
+Description=Receptor — syncs local folders into Memory
 After=network-online.target
 Wants=network-online.target
 
@@ -166,7 +166,7 @@ func statusForEUID(euid int) (installed bool, system bool, err error) {
 }
 
 // Restart force-restarts an already-installed service — used by
-// `receptor-daemon update` after swapping in a new binary, so the new
+// `receptor update` after swapping in a new binary, so the new
 // version actually takes effect rather than sitting on disk unused by
 // the still-running old process.
 func Restart(opts Options) error {

@@ -16,16 +16,16 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            artifact: receptor-daemon-linux-amd64
+            artifact: receptor-linux-amd64
           - goos: linux
             goarch: arm64
-            artifact: receptor-daemon-linux-arm64
+            artifact: receptor-linux-arm64
           - goos: darwin
             goarch: amd64
-            artifact: receptor-daemon-darwin-amd64
+            artifact: receptor-darwin-amd64
           - goos: darwin
             goarch: arm64
-            artifact: receptor-daemon-darwin-arm64
+            artifact: receptor-darwin-arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -37,10 +37,10 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        # Embeds the exact tag this binary was built from, so `receptor-daemon
+        # Embeds the exact tag this binary was built from, so `receptor
         # --version` always tells you precisely what you're running — added
         # after repeated confusion testing against a stale binary.
-        run: go build -ldflags "-X main.version=${{ github.ref_name }}" -o ${{ matrix.artifact }} ./cmd/receptor-daemon
+        run: go build -ldflags "-X main.version=${{ github.ref_name }}" -o ${{ matrix.artifact }} ./cmd/receptor
 
       - uses: actions/upload-artifact@v4
         with:
@@ -59,24 +59,26 @@ jobs:
           merge-multiple: true
 
       # Memory's /api/receptor-daemon/download proxy (see lib/receptor_daemon_releases.ts
-      # in the memory repo) verifies a downloaded binary against this before
-      # ever serving it to a daemon running `receptor-daemon update` — the
-      # whole point of routing updates through Memory instead of daemons
-      # fetching straight from GitHub themselves.
+      # in the memory repo — that route path itself is unchanged by the
+      # receptor-daemon -> receptor CLI rename, only the asset filename
+      # pattern it matches against changed) verifies a downloaded binary
+      # against this before ever serving it to a daemon running `receptor
+      # update` — the whole point of routing updates through Memory instead
+      # of daemons fetching straight from GitHub themselves.
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum receptor-daemon-* > checksums.txt
+        run: sha256sum receptor-* > checksums.txt
 
       - name: Create release
         run: |
           gh release create "${{ github.ref_name }}" \
             --repo "${{ github.repository }}" \
-            dist/receptor-daemon-linux-amd64 \
-            dist/receptor-daemon-linux-arm64 \
-            dist/receptor-daemon-darwin-amd64 \
-            dist/receptor-daemon-darwin-arm64 \
+            dist/receptor-linux-amd64 \
+            dist/receptor-linux-arm64 \
+            dist/receptor-darwin-amd64 \
+            dist/receptor-darwin-arm64 \
             dist/checksums.txt \
             --title "${{ github.ref_name }}" \
-            --notes "Receptor Daemon ${{ github.ref_name }} — see README.md for install/run instructions."
+            --notes "Receptor Daemon ${{ github.ref_name }} — see README.md for install/run instructions. Starting with this release, the command is \`receptor\` instead of \`receptor-daemon\` — see the README's Installing section if you're updating an existing install."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

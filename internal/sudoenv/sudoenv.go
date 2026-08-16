@@ -3,7 +3,7 @@
 // resource (a home directory, a per-user systemd/launchd domain) must be
 // targeted correctly, even when sudo was only used to get enough
 // privilege for a separate, unrelated step (e.g. writing a root-owned
-// binary path during `sudo receptor-daemon update`). Shared by
+// binary path during `sudo receptor update`). Shared by
 // internal/config (the config file's default location) and
 // internal/service (systemd/launchd per-user paths, and on macOS the
 // launchd domain itself) so both resolve the same way.

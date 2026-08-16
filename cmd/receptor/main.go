@@ -1,4 +1,4 @@
-// Command receptor-daemon is a headless, terminal-driven agent that syncs
+// Command receptor is a headless, terminal-driven agent that syncs
 // local folders into Memory — no GUI, meant to run on machines that don't
 // have one at all (headless Linux servers, headless Mac minis), installed
 // as a systemd or launchd background service.
@@ -61,7 +61,7 @@ func main() {
 	case "update":
 		err = cmdUpdate(args)
 	case "-v", "--version", "version":
-		fmt.Println("receptor-daemon " + version)
+		fmt.Println("receptor " + version)
 		return
 	case "-h", "--help", "help":
 		printUsage()
@@ -78,18 +78,18 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, "receptor-daemon %s — headless folder sync for Memory (Linux/macOS)\n", version)
+	fmt.Fprintf(os.Stderr, "receptor %s — headless folder sync for Memory (Linux/macOS)\n", version)
 	fmt.Fprint(os.Stderr, `
 Usage:
-  receptor-daemon                                run with no arguments for an
+  receptor                                run with no arguments for an
                                                   interactive setup wizard on
                                                   first use, or a status summary
                                                   if already configured
-  receptor-daemon init                           same interactive wizard,
+  receptor init                           same interactive wizard,
                                                   explicitly — safe to re-run
                                                   any time to review/update your
                                                   setup, folders included
-  receptor-daemon init [--server <url>] [--api-key <key>]
+  receptor init [--server <url>] [--api-key <key>]
                        [--sync-interval-minutes <n>]
                                                   non-interactive instead: sets
                                                   up (first run) or updates
@@ -98,32 +98,32 @@ Usage:
                                                   list; restarts the background
                                                   service automatically if one
                                                   is running
-  receptor-daemon folders add <path> [--ignore pat,pat]
-  receptor-daemon folders remove <path>
-  receptor-daemon folders list
-  receptor-daemon sync
-  receptor-daemon status
-  receptor-daemon start [--system]               runs it in the background
+  receptor folders add <path> [--ignore pat,pat]
+  receptor folders remove <path>
+  receptor folders list
+  receptor sync
+  receptor status
+  receptor start [--system]               runs it in the background
                                                   from now on; --system is
                                                   for a shared/headless
                                                   machine nobody logs into
                                                   (needs sudo) — most people
                                                   never need it
-  receptor-daemon stop [--system]                stops the background service
+  receptor stop [--system]                stops the background service
                                                   (config is untouched)
-  receptor-daemon update                         downloads and installs the
+  receptor update                         downloads and installs the
                                                   latest release (through
                                                   Memory, checksum-verified),
                                                   then restarts the background
                                                   service if one is running —
                                                   a no-op if already up to
                                                   date
-  receptor-daemon --version                      print the build version —
+  receptor --version                      print the build version —
                                                   check this if something
                                                   documented here seems missing,
                                                   you may be on an old binary
 
-("receptor-daemon run" runs the sync loop directly in the foreground —
+("receptor run" runs the sync loop directly in the foreground —
 what "start" sets up to happen automatically in the background instead.
 You should never need to type it yourself.)
 
@@ -146,7 +146,7 @@ func addConfigFlag(fs *flag.FlagSet) *string {
 
 // MARK: - default (bare invocation)
 
-// cmdDefault is what runs when receptor-daemon is invoked with no
+// cmdDefault is what runs when receptor is invoked with no
 // arguments at all: a guided setup wizard on first use (mirroring tools
 // like `aws configure`/`gh auth login`), or a quick status summary if
 // already configured — never silently re-runs setup over a working
@@ -167,12 +167,12 @@ func cmdDefault() error {
 	}
 
 	printStatusReport(cfg, daemon.Status(context.Background(), cfg, configPath))
-	fmt.Println("\nAlready configured. Run `receptor-daemon init` to review/update your setup, `receptor-daemon --help` for the full command list, or `receptor-daemon folders add <path>` to watch another folder.")
+	fmt.Println("\nAlready configured. Run `receptor init` to review/update your setup, `receptor --help` for the full command list, or `receptor folders add <path>` to watch another folder.")
 	return nil
 }
 
-// runSetupWizard is the guided Q&A used both by bare `receptor-daemon`
-// (first run only) and by `receptor-daemon init` called with no flags
+// runSetupWizard is the guided Q&A used both by bare `receptor`
+// (first run only) and by `receptor init` called with no flags
 // (any time — an explicit "let's (re)configure" signal). It loads
 // whatever's already at configPath first and uses those values as
 // defaults/starting point, so re-running it never silently wipes
@@ -304,7 +304,7 @@ func runSetupWizard(configPath string) error {
 	}
 
 	fmt.Println()
-	startNow, err := promptYesNo(reader, "Start receptor-daemon as a background service now?", true)
+	startNow, err := promptYesNo(reader, "Start receptor as a background service now?", true)
 	if err != nil {
 		return fmt.Errorf("reading input: %w", err)
 	}
@@ -322,11 +322,11 @@ func runSetupWizard(configPath string) error {
 		if err := service.Install(opts); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not start the service: %v\n", err)
 		} else {
-			fmt.Println("started the receptor-daemon service")
+			fmt.Println("started the receptor service")
 		}
 	}
 
-	fmt.Println("\nAll set! Run `receptor-daemon status` any time, or `receptor-daemon --help` for the full command list.")
+	fmt.Println("\nAll set! Run `receptor status` any time, or `receptor --help` for the full command list.")
 	return nil
 }
 
@@ -485,7 +485,7 @@ func restartServiceIfRunning(configPath string) {
 // promptAPIKey reads the key without echoing it to the terminal, so it
 // doesn't end up visible on-screen or in scrollback. Falls back to
 // reading a plain line from reader when stdin isn't a real TTY (e.g.
-// piped input from a setup script), so `echo "$KEY" | receptor-daemon
+// piped input from a setup script), so `echo "$KEY" | receptor
 // init ...` still works. Callers that also do other line-based prompts
 // (the setup wizard) must pass the same *bufio.Reader instance they use
 // for those — bufio buffers ahead, so two separate readers over the same
@@ -511,7 +511,7 @@ func promptAPIKey(reader *bufio.Reader) (string, error) {
 
 func cmdFolders(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: receptor-daemon folders <add|remove|list> ...")
+		return fmt.Errorf("usage: receptor folders <add|remove|list> ...")
 	}
 	switch args[0] {
 	case "add":
@@ -533,7 +533,7 @@ func cmdFoldersAdd(args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: receptor-daemon folders add <path> [--ignore pat,pat]")
+		return fmt.Errorf("usage: receptor folders add <path> [--ignore pat,pat]")
 	}
 
 	path, err := filepath.Abs(fs.Arg(0))
@@ -573,7 +573,7 @@ func cmdFoldersRemove(args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: receptor-daemon folders remove <path>")
+		return fmt.Errorf("usage: receptor folders remove <path>")
 	}
 
 	path, err := filepath.Abs(fs.Arg(0))
@@ -704,7 +704,7 @@ func printStatusReport(cfg config.Config, report daemon.StatusReport) {
 	fmt.Printf("%d folder(s) configured\n", report.FolderCount)
 	switch {
 	case !report.ServiceInstalled:
-		fmt.Println("service: not running in the background (run `receptor-daemon start` to)")
+		fmt.Println("service: not running in the background (run `receptor start` to)")
 	case report.ServiceSystemWide:
 		fmt.Println("service: running system-wide (starts automatically at boot)")
 	default:
@@ -759,7 +759,7 @@ func cmdStart(args []string) error {
 	if err := service.Install(opts); err != nil {
 		return err
 	}
-	fmt.Println("started the receptor-daemon service")
+	fmt.Println("started the receptor service")
 	return nil
 }
 
@@ -779,7 +779,7 @@ func cmdStop(args []string) error {
 	if err := service.Uninstall(opts); err != nil {
 		return err
 	}
-	fmt.Println("stopped the receptor-daemon service")
+	fmt.Println("stopped the receptor service")
 	return nil
 }
 
@@ -790,7 +790,7 @@ func cmdStop(args []string) error {
 // via an atomic rename, then restarts the background service if one is
 // installed so the new binary actually takes effect. A manual,
 // opt-in-per-machine trigger — nothing here runs unless someone types
-// `receptor-daemon update` themselves.
+// `receptor update` themselves.
 
 func cmdUpdate(args []string) error {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
@@ -803,7 +803,7 @@ func cmdUpdate(args []string) error {
 		return err
 	}
 	if cfg.APIKey == "" || cfg.ServerURL == "" {
-		return fmt.Errorf("not configured — run `receptor-daemon init` first")
+		return fmt.Errorf("not configured — run `receptor init` first")
 	}
 
 	client := core.NewMemoryClient(cfg.ServerURL, cfg.APIKey)
@@ -814,7 +814,7 @@ func cmdUpdate(args []string) error {
 		return fmt.Errorf("checking for updates: %w", err)
 	}
 	if latest == "" {
-		return fmt.Errorf("Memory doesn't know the latest receptor-daemon version yet — try again shortly")
+		return fmt.Errorf("Memory doesn't know the latest receptor version yet — try again shortly")
 	}
 	if latest == version {
 		fmt.Printf("already up to date (%s)\n", version)
@@ -837,7 +837,7 @@ func cmdUpdate(args []string) error {
 	if outcome.ServiceRestarted {
 		fmt.Println("restarted the background service")
 	} else {
-		fmt.Println("not running as a background service — restart `receptor-daemon run` to use the new version")
+		fmt.Println("not running as a background service — restart `receptor run` to use the new version")
 	}
 	return nil
 }

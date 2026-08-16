@@ -9,7 +9,7 @@ import (
 	"github.com/IndexMemory/receptor-daemon/internal/service"
 )
 
-// StatusReport is what `receptor-daemon status` prints.
+// StatusReport is what `receptor status` prints.
 type StatusReport struct {
 	Configured        bool
 	Connected         bool
@@ -26,7 +26,7 @@ func Status(ctx context.Context, cfg config.Config, configPath string) StatusRep
 	report := StatusReport{FolderCount: len(cfg.Folders)}
 
 	if cfg.APIKey == "" || cfg.ServerURL == "" {
-		report.ConnectionErr = "not configured — run `receptor-daemon init` first"
+		report.ConnectionErr = "not configured — run `receptor init` first"
 	} else {
 		report.Configured = true
 		client := core.NewMemoryClient(cfg.ServerURL, cfg.APIKey)

@@ -19,12 +19,12 @@ type UpdateOutcome struct {
 	ServiceRestarted bool
 }
 
-// ApplyDaemonUpdate downloads the latest receptor-daemon release through
+// ApplyDaemonUpdate downloads the latest receptor release through
 // Memory (see core.MemoryClient.DownloadDaemonBinary — verified,
 // proxied, never a direct GitHub fetch), atomically swaps it in at
 // binaryPath, and restarts the background service if one is installed
-// so the new binary actually takes effect. Shared by `receptor-daemon
-// update` (cmd/receptor-daemon/main.go) and this package's check-in loop
+// so the new binary actually takes effect. Shared by `receptor
+// update` (cmd/receptor/main.go) and this package's check-in loop
 // (checkin.go, for an admin-triggered remote update) so both behave
 // identically — Phase 3's remote trigger is deliberately just "deliver
 // the same instruction a human would type," not a separate code path.
